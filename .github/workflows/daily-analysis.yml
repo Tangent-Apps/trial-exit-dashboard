@@ -1,0 +1,49 @@
+name: Daily Trial Exit Analysis
+
+on:
+  schedule:
+    # Run at 8:00 UTC daily (after RC exports typically complete ~6am)
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCS_SERVICE_ACCOUNT_KEY }}'
+
+      - name: Run daily analysis
+        working-directory: scripts
+        run: python run_daily.py
+
+      - name: Commit and push results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "No new data to commit"
+          else
+            DATE=$(date -u +%Y-%m-%d)
+            git commit -m "Daily analysis: ${DATE}"
+            git push
+          fi

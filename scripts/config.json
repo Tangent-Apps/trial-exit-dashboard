@@ -1,0 +1,30 @@
+{
+  "gcs_bucket": "",
+  "apps": [
+    {
+      "name": "Christian Daily Task",
+      "slug": "christian-daily-task",
+      "rc_project_id": ""
+    },
+    {
+      "name": "GirlWalk",
+      "slug": "girlwalk",
+      "rc_project_id": ""
+    },
+    {
+      "name": "GirlTalk",
+      "slug": "girltalk",
+      "rc_project_id": ""
+    },
+    {
+      "name": "Poly AI",
+      "slug": "poly-ai",
+      "rc_project_id": ""
+    },
+    {
+      "name": "Christian Music",
+      "slug": "christian-music",
+      "rc_project_id": ""
+    }
+  ]
+}

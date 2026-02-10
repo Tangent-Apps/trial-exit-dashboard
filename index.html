@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trial Exit Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232733;
+    --border: #2e3345;
+    --text: #e1e4ed;
+    --text-dim: #8b90a0;
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --blue: #60a5fa;
+    --purple: #a78bfa;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .header {
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .header h1 {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  select, button {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  select:hover, button:hover { border-color: var(--blue); }
+
+  .container { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .metric-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .metric-card .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .metric-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .metric-card .sub {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .metric-card .delta {
+    font-size: 13px;
+    margin-top: 4px;
+    font-weight: 500;
+  }
+
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--red); }
+  .delta.neutral { color: var(--text-dim); }
+
+  .chart-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .chart-container h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .chart-wrapper { position: relative; height: 320px; }
+
+  .tables-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+
+  @media (max-width: 900px) {
+    .tables-row { grid-template-columns: 1fr; }
+  }
+
+  .table-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    overflow-x: auto;
+  }
+
+  .table-container h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .text-right { text-align: right; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .badge-green { background: rgba(52,211,153,0.15); color: var(--green); }
+  .badge-red { background: rgba(248,113,113,0.15); color: var(--red); }
+  .badge-yellow { background: rgba(251,191,36,0.15); color: var(--yellow); }
+
+  .empty-state {
+    text-align: center;
+    padding: 80px 24px;
+    color: var(--text-dim);
+  }
+
+  .empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 80px;
+    color: var(--text-dim);
+  }
+
+  .last-updated {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Trial Exit Dashboard</h1>
+  <div class="controls">
+    <select id="appSelector">
+      <option value="">Loading apps...</option>
+    </select>
+    <select id="rangeSelector">
+      <option value="30">Last 30 days</option>
+      <option value="60">Last 60 days</option>
+      <option value="90">Last 90 days</option>
+      <option value="0" selected>All time</option>
+    </select>
+    <span id="lastUpdated" class="last-updated"></span>
+  </div>
+</div>
+
+<div class="container">
+  <div id="content">
+    <div class="loading">Loading data...</div>
+  </div>
+</div>
+
+<script>
+const BASE_URL = '';  // relative path for GitHub Pages
+
+let indexData = null;
+let appDataCache = {};
+let trendChart = null;
+
+async function loadIndex() {
+  try {
+    const resp = await fetch(`${BASE_URL}data/index.json`);
+    if (!resp.ok) throw new Error('No data yet');
+    indexData = await resp.json();
+    populateAppSelector();
+    document.getElementById('lastUpdated').textContent =
+      `Updated: ${new Date(indexData.last_updated).toLocaleDateString()}`;
+  } catch (e) {
+    document.getElementById('content').innerHTML = `
+      <div class="empty-state">
+        <h2>No data yet</h2>
+        <p>The daily analysis hasn't run yet. Trigger the GitHub Action manually or wait for the scheduled run.</p>
+      </div>`;
+  }
+}
+
+function populateAppSelector() {
+  const sel = document.getElementById('appSelector');
+  sel.innerHTML = '';
+  indexData.apps.forEach(slug => {
+    const opt = document.createElement('option');
+    opt.value = slug;
+    opt.textContent = indexData.app_names[slug] || slug;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', () => loadAppData(sel.value));
+  document.getElementById('rangeSelector').addEventListener('change', () => loadAppData(sel.value));
+  // Load first app
+  if (indexData.apps.length > 0) loadAppData(indexData.apps[0]);
+}
+
+async function loadAppData(slug) {
+  const dates = indexData.data[slug];
+  if (!dates || dates.length === 0) {
+    document.getElementById('content').innerHTML = `
+      <div class="empty-state">
+        <h2>No data for ${indexData.app_names[slug]}</h2>
+        <p>Waiting for the first daily analysis to run for this app.</p>
+      </div>`;
+    return;
+  }
+
+  // Filter by range
+  const rangeDays = parseInt(document.getElementById('rangeSelector').value);
+  let filteredDates = dates;
+  if (rangeDays > 0) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - rangeDays);
+    const cutoffStr = cutoff.toISOString().split('T')[0];
+    filteredDates = dates.filter(d => d >= cutoffStr);
+  }
+
+  // Load all date files for this app
+  const snapshots = [];
+  for (const d of filteredDates) {
+    const cacheKey = `${slug}/${d}`;
+    if (!appDataCache[cacheKey]) {
+      try {
+        const resp = await fetch(`${BASE_URL}data/${slug}/${d}.json`);
+        if (resp.ok) appDataCache[cacheKey] = await resp.json();
+      } catch (e) { /* skip */ }
+    }
+    if (appDataCache[cacheKey]) snapshots.push(appDataCache[cacheKey]);
+  }
+
+  if (snapshots.length === 0) {
+    document.getElementById('content').innerHTML = `
+      <div class="empty-state">
+        <h2>No data loaded</h2>
+        <p>Could not load analysis files.</p>
+      </div>`;
+    return;
+  }
+
+  renderDashboard(slug, snapshots);
+}
+
+function renderDashboard(slug, snapshots) {
+  const latest = snapshots[snapshots.length - 1];
+  const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
+  const o = latest.overall;
+
+  function delta(current, previous, key, invert = false) {
+    if (!previous || current[key] === null || previous.overall[key] === null) return '';
+    const diff = current[key] - previous.overall[key];
+    if (Math.abs(diff) < 0.001) return '<span class="delta neutral">—</span>';
+    const isUp = diff > 0;
+    const isGood = invert ? !isUp : isUp;
+    const cls = isGood ? 'up' : 'down';
+    const arrow = isUp ? '↑' : '↓';
+    return `<span class="delta ${cls}">${arrow} ${Math.abs(diff * 100).toFixed(1)}pp</span>`;
+  }
+
+  const appName = indexData.app_names[slug] || slug;
+
+  document.getElementById('content').innerHTML = `
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="label">Conversion Rate</div>
+        <div class="value" style="color: var(--green)">${o.conversion_rate !== null ? (o.conversion_rate * 100).toFixed(1) + '%' : '—'}</div>
+        <div class="sub">${o.converted} of ${o.resolved} resolved</div>
+        ${delta(o, prev, 'conversion_rate')}
+      </div>
+      <div class="metric-card">
+        <div class="label">Cancel Rate</div>
+        <div class="value" style="color: var(--red)">${o.cancel_rate !== null ? (o.cancel_rate * 100).toFixed(1) + '%' : '—'}</div>
+        <div class="sub">${o.cancelled} of ${o.resolved} resolved</div>
+        ${delta(o, prev, 'cancel_rate', true)}
+      </div>
+      <div class="metric-card">
+        <div class="label">Billing Issue Rate</div>
+        <div class="value" style="color: var(--yellow)">${o.billing_rate !== null ? (o.billing_rate * 100).toFixed(1) + '%' : '—'}</div>
+        <div class="sub">${o.billing_issue} of ${o.resolved} resolved</div>
+        ${delta(o, prev, 'billing_rate', true)}
+      </div>
+      <div class="metric-card">
+        <div class="label">Total Trials</div>
+        <div class="value">${o.total_trials.toLocaleString()}</div>
+        <div class="sub">${o.in_trial} still in trial</div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <h2>Rate Trends Over Time</h2>
+      <div class="chart-wrapper">
+        <canvas id="trendChart"></canvas>
+      </div>
+    </div>
+
+    <div class="tables-row">
+      <div class="table-container">
+        <h2>Weekly Cohorts (Latest Snapshot)</h2>
+        <table id="weeklyTable"></table>
+      </div>
+      <div class="table-container">
+        <h2>By Product (Latest Snapshot)</h2>
+        <table id="productTable"></table>
+      </div>
+    </div>
+  `;
+
+  renderTrendChart(snapshots);
+  renderWeeklyTable(latest);
+  renderProductTable(latest);
+}
+
+function renderTrendChart(snapshots) {
+  const ctx = document.getElementById('trendChart').getContext('2d');
+
+  if (trendChart) trendChart.destroy();
+
+  const labels = snapshots.map(s => s.date);
+  const convData = snapshots.map(s => s.overall.conversion_rate !== null ? +(s.overall.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = snapshots.map(s => s.overall.cancel_rate !== null ? +(s.overall.cancel_rate * 100).toFixed(1) : null);
+  const billingData = snapshots.map(s => s.overall.billing_rate !== null ? +(s.overall.billing_rate * 100).toFixed(1) : null);
+
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Conversion %',
+          data: convData,
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52,211,153,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 2,
+        },
+        {
+          label: 'Cancel %',
+          data: cancelData,
+          borderColor: '#f87171',
+          backgroundColor: 'rgba(248,113,113,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 2,
+        },
+        {
+          label: 'Billing Issue %',
+          data: billingData,
+          borderColor: '#fbbf24',
+          backgroundColor: 'rgba(251,191,36,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          borderWidth: 2,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#8b90a0', usePointStyle: true, padding: 20 } },
+        tooltip: {
+          backgroundColor: '#1a1d27',
+          borderColor: '#2e3345',
+          borderWidth: 1,
+          titleColor: '#e1e4ed',
+          bodyColor: '#e1e4ed',
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}%`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: '#2e3345' },
+          ticks: { color: '#8b90a0', maxRotation: 45 }
+        },
+        y: {
+          grid: { color: '#2e3345' },
+          ticks: { color: '#8b90a0', callback: v => v + '%' },
+          min: 0,
+          max: 100,
+        }
+      }
+    }
+  });
+}
+
+function renderWeeklyTable(snapshot) {
+  const table = document.getElementById('weeklyTable');
+  const weeks = snapshot.weekly_cohorts || [];
+
+  // Show last 12 weeks
+  const recentWeeks = weeks.slice(-12);
+
+  let html = `
+    <thead>
+      <tr>
+        <th>Week</th>
+        <th class="text-right">Trials</th>
+        <th class="text-right">Conv%</th>
+        <th class="text-right">Cancel%</th>
+        <th class="text-right">Billing%</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  recentWeeks.forEach(w => {
+    const convBadge = w.conversion_rate !== null
+      ? `<span class="badge ${w.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(w.conversion_rate * 100).toFixed(1)}%</span>`
+      : '—';
+    const cancelBadge = w.cancel_rate !== null
+      ? `${(w.cancel_rate * 100).toFixed(1)}%`
+      : '—';
+    const billingBadge = w.billing_rate !== null
+      ? `<span class="badge ${w.billing_rate >= 0.4 ? 'badge-red' : w.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}">${(w.billing_rate * 100).toFixed(1)}%</span>`
+      : '—';
+
+    html += `
+      <tr>
+        <td>${w.week_start}</td>
+        <td class="text-right">${w.total_trials}</td>
+        <td class="text-right">${convBadge}</td>
+        <td class="text-right">${cancelBadge}</td>
+        <td class="text-right">${billingBadge}</td>
+      </tr>`;
+  });
+
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+function renderProductTable(snapshot) {
+  const table = document.getElementById('productTable');
+  const products = (snapshot.products || []).filter(p => p.resolved > 0);
+
+  let html = `
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th class="text-right">Resolved</th>
+        <th class="text-right">Conv%</th>
+        <th class="text-right">Billing%</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  products.forEach(p => {
+    // Shorten product ID for display
+    const shortName = p.product_id.split('.').pop() || p.product_id;
+
+    html += `
+      <tr>
+        <td title="${p.product_id}">${shortName}</td>
+        <td class="text-right">${p.resolved}</td>
+        <td class="text-right">
+          <span class="badge ${p.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(p.conversion_rate * 100).toFixed(1)}%</span>
+        </td>
+        <td class="text-right">
+          <span class="badge ${p.billing_rate >= 0.4 ? 'badge-red' : 'badge-yellow'}">${(p.billing_rate * 100).toFixed(1)}%</span>
+        </td>
+      </tr>`;
+  });
+
+  if (products.length === 0) {
+    html += '<tr><td colspan="4" style="text-align:center; color: var(--text-dim)">No product data</td></tr>';
+  }
+
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+// Init
+loadIndex();
+</script>
+</body>
+</html>
