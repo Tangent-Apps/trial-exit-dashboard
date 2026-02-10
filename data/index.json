@@ -1,11 +1,9 @@
 {
-  "apps": ["christian-daily-task", "girlwalk", "girltalk", "poly-ai", "christian-music"],
+  "apps": ["christian-daily-task", "girlwalk", "girltalk"],
   "app_names": {
     "christian-daily-task": "Christian Daily Task",
     "girlwalk": "GirlWalk",
-    "girltalk": "GirlTalk",
-    "poly-ai": "Poly AI",
-    "christian-music": "Christian Music"
+    "girltalk": "GirlTalk"
   },
   "data": {},
   "last_updated": null
