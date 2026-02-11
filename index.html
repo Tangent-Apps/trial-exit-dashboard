@@ -302,6 +302,11 @@
     <select id="appSelector">
       <option value="">Select app</option>
     </select>
+    <select id="granularitySelector">
+      <option value="daily">Daily</option>
+      <option value="weekly" selected>Weekly</option>
+      <option value="monthly">Monthly</option>
+    </select>
     <select id="rangeSelector">
       <option value="30">Last 30 days</option>
       <option value="60">Last 60 days</option>
@@ -345,8 +350,8 @@ const APPS = {
   'girltalk': { name: 'GirlTalk' },
 };
 
-const STORAGE_KEY = 'trial-exit-dashboard-v1';
-let weeklyChart = null;
+const STORAGE_KEY = 'trial-exit-dashboard-v2';
+let cohortChart = null;
 
 // ─── Storage ───
 function loadStorage() {
@@ -439,6 +444,11 @@ function parseTimestamp(val) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+function getDateKey(date) {
+  if (!date) return null;
+  return date.toISOString().split('T')[0];
+}
+
 function getWeekStart(date) {
   if (!date) return null;
   const d = new Date(date);
@@ -447,6 +457,35 @@ function getWeekStart(date) {
   const m = new Date(d);
   m.setDate(diff);
   return m.toISOString().split('T')[0];
+}
+
+function getMonthKey(date) {
+  if (!date) return null;
+  return date.toISOString().slice(0, 7);
+}
+
+function bucketCohorts(dailyCohorts, granularity) {
+  if (granularity === 'daily') return dailyCohorts;
+  const map = {};
+  dailyCohorts.forEach(d => {
+    const dateObj = new Date(d.period + 'T00:00:00');
+    const key = granularity === 'monthly' ? getMonthKey(dateObj) : getWeekStart(dateObj);
+    if (!key) return;
+    if (!map[key]) map[key] = { period: key, total_trials: 0, resolved: 0, in_trial: 0, converted: 0, cancelled: 0, billing_issue: 0 };
+    map[key].total_trials += d.total_trials;
+    map[key].resolved += d.resolved;
+    map[key].in_trial += d.in_trial;
+    map[key].converted += d.converted;
+    map[key].cancelled += d.cancelled;
+    map[key].billing_issue += d.billing_issue;
+  });
+  return Object.keys(map).sort().map(key => {
+    const b = map[key];
+    b.conversion_rate = b.resolved > 0 ? Math.round((b.converted / b.resolved) * 10000) / 10000 : null;
+    b.cancel_rate = b.resolved > 0 ? Math.round((b.cancelled / b.resolved) * 10000) / 10000 : null;
+    b.billing_rate = b.resolved > 0 ? Math.round((b.billing_issue / b.resolved) * 10000) / 10000 : null;
+    return b;
+  });
 }
 
 // ─── Analysis ───
@@ -476,18 +515,18 @@ function analyzeData(rows) {
 
   const overall = computeRates(classified);
 
-  // Weekly cohorts
-  const weekMap = {};
+  // Daily cohorts (stored as base; bucketed to weekly/monthly on the fly)
+  const dayMap = {};
   classified.forEach(u => {
-    const week = getWeekStart(u.trialStart);
-    if (!week) return;
-    if (!weekMap[week]) weekMap[week] = [];
-    weekMap[week].push(u);
+    const day = getDateKey(u.trialStart);
+    if (!day) return;
+    if (!dayMap[day]) dayMap[day] = [];
+    dayMap[day].push(u);
   });
 
-  const weekly_cohorts = Object.keys(weekMap).sort().map(week => {
-    const rates = computeRates(weekMap[week]);
-    rates.week_start = week;
+  const daily_cohorts = Object.keys(dayMap).sort().map(day => {
+    const rates = computeRates(dayMap[day]);
+    rates.period = day;
     return rates;
   });
 
@@ -508,7 +547,7 @@ function analyzeData(rows) {
   return {
     date: new Date().toISOString().split('T')[0],
     generated_at: new Date().toISOString(),
-    overall, weekly_cohorts, products,
+    overall, daily_cohorts, products,
   };
 }
 
@@ -555,21 +594,20 @@ function populateAppSelector() {
   const data = loadStorage();
 
   for (const slug of Object.keys(APPS)) {
-    const count = data[slug]?.length || 0;
     const opt = document.createElement('option');
     opt.value = slug;
-    opt.textContent = APPS[slug].name + (count > 0 ? ` (${count})` : '');
+    opt.textContent = APPS[slug].name;
     sel.appendChild(opt);
   }
   if (current) sel.value = current;
 }
 
-function filterWeeks(weeks, rangeDays) {
-  if (!rangeDays || rangeDays <= 0) return weeks;
+function filterCohorts(cohorts, rangeDays) {
+  if (!rangeDays || rangeDays <= 0) return cohorts;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - rangeDays);
   const cutoffStr = cutoff.toISOString().split('T')[0];
-  return weeks.filter(w => w.week_start >= cutoffStr);
+  return cohorts.filter(c => c.period >= cutoffStr);
 }
 
 function renderApp(slug) {
@@ -624,23 +662,30 @@ function renderApp(slug) {
   const latest = snapshots[snapshots.length - 1];
   const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
 
-  // Apply date range filter to weekly cohorts
+  // Get daily cohorts (support old weekly_cohorts format for backward compat)
+  const granularity = document.getElementById('granularitySelector').value;
   const rangeDays = parseInt(document.getElementById('rangeSelector').value);
-  const allWeeks = latest.weekly_cohorts || [];
-  const filteredWeeks = filterWeeks(allWeeks, rangeDays);
 
-  // Recompute overall from filtered weeks if filtering is active
+  let dailyCohorts = latest.daily_cohorts || [];
+  // Backward compat: convert old weekly_cohorts to period-based format
+  if (dailyCohorts.length === 0 && latest.weekly_cohorts) {
+    dailyCohorts = latest.weekly_cohorts.map(w => ({ ...w, period: w.week_start }));
+  }
+
+  const allCohorts = bucketCohorts(dailyCohorts, granularity);
+  const filteredCohorts = filterCohorts(allCohorts, rangeDays);
+
+  // Recompute overall from filtered cohorts if filtering is active
   let overall;
-  if (rangeDays > 0 && filteredWeeks.length < allWeeks.length && filteredWeeks.length > 0) {
-    // Sum up from filtered weeks
+  if (rangeDays > 0 && filteredCohorts.length < allCohorts.length && filteredCohorts.length > 0) {
     let totalTrials = 0, resolved = 0, inTrial = 0, converted = 0, cancelled = 0, billing = 0;
-    filteredWeeks.forEach(w => {
-      totalTrials += w.total_trials;
-      resolved += w.resolved;
-      inTrial += w.in_trial;
-      converted += w.converted;
-      cancelled += w.cancelled;
-      billing += w.billing_issue;
+    filteredCohorts.forEach(c => {
+      totalTrials += c.total_trials;
+      resolved += c.resolved;
+      inTrial += c.in_trial;
+      converted += c.converted;
+      cancelled += c.cancelled;
+      billing += c.billing_issue;
     });
     overall = {
       total_trials: totalTrials, resolved, in_trial: inTrial,
@@ -653,11 +698,13 @@ function renderApp(slug) {
     overall = latest.overall;
   }
 
-  renderDashboard(slug, latest, prev, overall, filteredWeeks);
+  renderDashboard(slug, latest, prev, overall, filteredCohorts, granularity);
 }
 
-function renderDashboard(slug, latest, prev, overall, weeks) {
+function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
   const o = overall;
+  const granLabel = { daily: 'Day', weekly: 'Week', monthly: 'Month' }[granularity] || 'Week';
+  const granLabelPlural = { daily: 'days', weekly: 'weeks', monthly: 'months' }[granularity] || 'weeks';
 
   function delta(current, previous, key, invert = false) {
     if (!previous || current[key] === null || previous.overall[key] === null) return '';
@@ -675,7 +722,7 @@ function renderDashboard(slug, latest, prev, overall, weeks) {
 
   document.getElementById('content').innerHTML = `
     <div class="history-bar">
-      <span class="snapshots-info">Uploaded: ${latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} users &middot; Showing: ${rangeLabel} (${weeks.length} weeks)</span>
+      <span class="snapshots-info">Uploaded: ${latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} users &middot; Showing: ${rangeLabel} (${cohorts.length} ${granLabelPlural})</span>
     </div>
 
     <div class="metrics-row">
@@ -704,18 +751,18 @@ function renderDashboard(slug, latest, prev, overall, weeks) {
       </div>
     </div>
 
-    ${weeks.length > 0 ? `
+    ${cohorts.length > 0 ? `
     <div class="chart-container">
-      <h2>Weekly Cohort Trends</h2>
+      <h2>Cohort Trends (${granLabel})</h2>
       <div class="chart-wrapper">
-        <canvas id="weeklyChart"></canvas>
+        <canvas id="cohortChart"></canvas>
       </div>
     </div>` : ''}
 
     <div class="tables-row">
       <div class="table-container">
-        <h2>Weekly Cohorts</h2>
-        <table id="weeklyTable"></table>
+        <h2>Cohorts (${granLabel})</h2>
+        <table id="cohortTable"></table>
       </div>
       <div class="table-container">
         <h2>By Product</h2>
@@ -724,24 +771,23 @@ function renderDashboard(slug, latest, prev, overall, weeks) {
     </div>
   `;
 
-  if (weeks.length > 0) renderWeeklyChart(weeks);
-  renderWeeklyTable(weeks);
+  if (cohorts.length > 0) renderCohortChart(cohorts);
+  renderCohortTable(cohorts, granLabel);
   renderProductTable(latest);
 }
 
-function renderWeeklyChart(weeks) {
-  const ctx = document.getElementById('weeklyChart').getContext('2d');
-  if (weeklyChart) weeklyChart.destroy();
+function renderCohortChart(cohorts) {
+  const ctx = document.getElementById('cohortChart').getContext('2d');
+  if (cohortChart) cohortChart.destroy();
 
-  // Only chart weeks with resolved > 0 for meaningful rates
-  const chartWeeks = weeks.filter(w => w.resolved > 0);
+  const filtered = cohorts.filter(c => c.resolved > 0);
 
-  const labels = chartWeeks.map(w => w.week_start);
-  const convData = chartWeeks.map(w => w.conversion_rate !== null ? +(w.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = chartWeeks.map(w => w.cancel_rate !== null ? +(w.cancel_rate * 100).toFixed(1) : null);
-  const billingData = chartWeeks.map(w => w.billing_rate !== null ? +(w.billing_rate * 100).toFixed(1) : null);
+  const labels = filtered.map(c => c.period);
+  const convData = filtered.map(c => c.conversion_rate !== null ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filtered.map(c => c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filtered.map(c => c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
 
-  weeklyChart = new Chart(ctx, {
+  cohortChart = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
@@ -783,36 +829,36 @@ function renderWeeklyChart(weeks) {
   });
 }
 
-function renderWeeklyTable(weeks) {
-  const table = document.getElementById('weeklyTable');
-  const recentWeeks = weeks.slice(-12);
+function renderCohortTable(cohorts, granLabel) {
+  const table = document.getElementById('cohortTable');
+  const recent = cohorts.slice(-20);
 
   let html = `
     <thead><tr>
-      <th>Week</th>
+      <th>${granLabel}</th>
       <th class="text-right">Trials</th>
       <th class="text-right">Conv%</th>
       <th class="text-right">Cancel%</th>
       <th class="text-right">Billing%</th>
     </tr></thead><tbody>`;
 
-  recentWeeks.forEach(w => {
-    const convBadge = w.conversion_rate !== null
-      ? `<span class="badge ${w.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(w.conversion_rate * 100).toFixed(1)}%</span>` : '—';
-    const cancelPct = w.cancel_rate !== null ? `${(w.cancel_rate * 100).toFixed(1)}%` : '—';
-    const billingBadge = w.billing_rate !== null
-      ? `<span class="badge ${w.billing_rate >= 0.4 ? 'badge-red' : w.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}">${(w.billing_rate * 100).toFixed(1)}%</span>` : '—';
+  recent.forEach(c => {
+    const convBadge = c.conversion_rate !== null
+      ? `<span class="badge ${c.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(c.conversion_rate * 100).toFixed(1)}%</span>` : '—';
+    const cancelPct = c.cancel_rate !== null ? `${(c.cancel_rate * 100).toFixed(1)}%` : '—';
+    const billingBadge = c.billing_rate !== null
+      ? `<span class="badge ${c.billing_rate >= 0.4 ? 'badge-red' : c.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}">${(c.billing_rate * 100).toFixed(1)}%</span>` : '—';
 
     html += `<tr>
-      <td>${w.week_start}</td>
-      <td class="text-right">${w.total_trials}</td>
+      <td>${c.period}</td>
+      <td class="text-right">${c.total_trials}</td>
       <td class="text-right">${convBadge}</td>
       <td class="text-right">${cancelPct}</td>
       <td class="text-right">${billingBadge}</td>
     </tr>`;
   });
 
-  if (recentWeeks.length === 0) html += '<tr><td colspan="5" style="text-align:center; color: var(--text-dim)">No weekly data in this range</td></tr>';
+  if (recent.length === 0) html += '<tr><td colspan="5" style="text-align:center; color: var(--text-dim)">No data in this range</td></tr>';
   html += '</tbody>';
   table.innerHTML = html;
 }
@@ -877,6 +923,10 @@ document.getElementById('rangeSelector').addEventListener('change', () => {
   const slug = document.getElementById('appSelector').value;
   if (slug) renderApp(slug);
 });
+document.getElementById('granularitySelector').addEventListener('change', () => {
+  const slug = document.getElementById('appSelector').value;
+  if (slug) renderApp(slug);
+});
 
 document.getElementById('clearBtn').addEventListener('click', () => {
   const slug = document.getElementById('appSelector').value;
@@ -890,6 +940,18 @@ document.getElementById('clearBtn').addEventListener('click', () => {
 });
 
 // ─── Init ───
+// Migrate v1 data to v2 if needed
+(function migrateStorage() {
+  const v2 = localStorage.getItem('trial-exit-dashboard-v2');
+  if (!v2) {
+    const v1 = localStorage.getItem('trial-exit-dashboard-v1');
+    if (v1) {
+      localStorage.setItem('trial-exit-dashboard-v2', v1);
+      // v1 data has weekly_cohorts; backward compat in renderApp handles it
+    }
+  }
+})();
+
 populateAppSelector();
 
 const stored = loadStorage();
