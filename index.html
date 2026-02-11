@@ -793,7 +793,10 @@ function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
 
     ${cohorts.length > 0 ? `
     <div class="chart-container">
-      <h2>Cohort Trends (${granLabel})</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="margin-bottom:0">Cohort Trends (${granLabel})</h2>
+        <span style="font-size:12px;color:var(--blue);opacity:0.7">⏳ Hatched bars = incomplete (${TRIAL_DAYS}-day trial)</span>
+      </div>
       <div class="chart-wrapper">
         <canvas id="cohortChart"></canvas>
       </div>
@@ -892,12 +895,6 @@ function renderCohortChart(cohorts, granularity) {
       drawCtx.moveTo(x, top);
       drawCtx.lineTo(x, bottom);
       drawCtx.stroke();
-      // Label
-      drawCtx.setLineDash([]);
-      drawCtx.font = '10px -apple-system, sans-serif';
-      drawCtx.fillStyle = 'rgba(96,165,250,0.7)';
-      drawCtx.textAlign = 'left';
-      drawCtx.fillText('← complete | incomplete →', x + 4, top + 12);
       drawCtx.restore();
     }
   };
@@ -967,7 +964,7 @@ function renderCohortChart(cohorts, granularity) {
 
 function renderCohortTable(cohorts, granLabel, granularity) {
   const table = document.getElementById('cohortTable');
-  const recent = cohorts.slice(-20);
+  const recent = cohorts;
 
   let html = `
     <thead><tr>
