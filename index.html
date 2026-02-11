@@ -485,27 +485,27 @@ function bucketCohorts(dailyCohorts, granularity) {
   });
   return Object.keys(map).sort().map(key => {
     const b = map[key];
-    b.conversion_rate = b.resolved > 0 ? Math.round((b.converted / b.resolved) * 10000) / 10000 : null;
-    b.cancel_rate = b.resolved > 0 ? Math.round((b.cancelled / b.resolved) * 10000) / 10000 : null;
-    b.billing_rate = b.resolved > 0 ? Math.round((b.billing_issue / b.resolved) * 10000) / 10000 : null;
+    b.conversion_rate = b.total_trials > 0 ? Math.round((b.converted / b.total_trials) * 10000) / 10000 : null;
+    b.cancel_rate = b.total_trials > 0 ? Math.round((b.cancelled / b.total_trials) * 10000) / 10000 : null;
+    b.billing_rate = b.total_trials > 0 ? Math.round((b.billing_issue / b.total_trials) * 10000) / 10000 : null;
     return b;
   });
 }
 
 // ─── Analysis ───
 function computeRates(users) {
-  const resolved = users.filter(u => u.outcome !== 'Still in Trial');
-  const t = resolved.length;
-  const c = resolved.filter(u => u.outcome === 'Converted').length;
-  const ca = resolved.filter(u => u.outcome === 'Cancelled').length;
-  const b = resolved.filter(u => u.outcome === 'Billing Issue').length;
+  const total = users.length;
+  const c = users.filter(u => u.outcome === 'Converted').length;
+  const ca = users.filter(u => u.outcome === 'Cancelled').length;
+  const b = users.filter(u => u.outcome === 'Billing Issue').length;
   const inTrial = users.filter(u => u.outcome === 'Still in Trial').length;
+  const resolved = total - inTrial;
   return {
-    total_trials: users.length, resolved: t, in_trial: inTrial,
+    total_trials: total, resolved, in_trial: inTrial,
     converted: c, cancelled: ca, billing_issue: b,
-    conversion_rate: t > 0 ? Math.round((c / t) * 10000) / 10000 : null,
-    cancel_rate: t > 0 ? Math.round((ca / t) * 10000) / 10000 : null,
-    billing_rate: t > 0 ? Math.round((b / t) * 10000) / 10000 : null,
+    conversion_rate: total > 0 ? Math.round((c / total) * 10000) / 10000 : null,
+    cancel_rate: total > 0 ? Math.round((ca / total) * 10000) / 10000 : null,
+    billing_rate: total > 0 ? Math.round((b / total) * 10000) / 10000 : null,
   };
 }
 
@@ -694,9 +694,9 @@ function renderApp(slug) {
     overall = {
       total_trials: totalTrials, resolved, in_trial: inTrial,
       converted, cancelled, billing_issue: billing,
-      conversion_rate: resolved > 0 ? Math.round((converted / resolved) * 10000) / 10000 : null,
-      cancel_rate: resolved > 0 ? Math.round((cancelled / resolved) * 10000) / 10000 : null,
-      billing_rate: resolved > 0 ? Math.round((billing / resolved) * 10000) / 10000 : null,
+      conversion_rate: totalTrials > 0 ? Math.round((converted / totalTrials) * 10000) / 10000 : null,
+      cancel_rate: totalTrials > 0 ? Math.round((cancelled / totalTrials) * 10000) / 10000 : null,
+      billing_rate: totalTrials > 0 ? Math.round((billing / totalTrials) * 10000) / 10000 : null,
     };
   } else {
     overall = latest.overall;
@@ -733,19 +733,19 @@ function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
       <div class="metric-card">
         <div class="label">Conversion Rate</div>
         <div class="value" style="color: var(--green)">${o.conversion_rate !== null ? (o.conversion_rate * 100).toFixed(1) + '%' : '—'}</div>
-        <div class="sub">${o.converted} of ${o.resolved} resolved</div>
+        <div class="sub">${o.converted} of ${o.total_trials} trials</div>
         ${delta(o, prev, 'conversion_rate')}
       </div>
       <div class="metric-card">
         <div class="label">Cancel Rate</div>
         <div class="value" style="color: var(--red)">${o.cancel_rate !== null ? (o.cancel_rate * 100).toFixed(1) + '%' : '—'}</div>
-        <div class="sub">${o.cancelled} of ${o.resolved} resolved</div>
+        <div class="sub">${o.cancelled} of ${o.total_trials} trials</div>
         ${delta(o, prev, 'cancel_rate', true)}
       </div>
       <div class="metric-card">
         <div class="label">Billing Issue Rate</div>
         <div class="value" style="color: var(--yellow)">${o.billing_rate !== null ? (o.billing_rate * 100).toFixed(1) + '%' : '—'}</div>
-        <div class="sub">${o.billing_issue} of ${o.resolved} resolved</div>
+        <div class="sub">${o.billing_issue} of ${o.total_trials} trials</div>
         ${delta(o, prev, 'billing_rate', true)}
       </div>
       <div class="metric-card">
@@ -827,12 +827,9 @@ function renderCohortChart(cohorts, granularity) {
   const filled = fillTimelineGaps(cohorts, granularity);
   // Only show rates for periods with resolved data; null otherwise (gaps in chart line)
   const labels = filled.map(c => c.period);
-  // Only show rates for cohorts where >50% of users have resolved (mature enough to be meaningful)
-  const isMature = c => c.total_trials > 0 && (c.resolved / c.total_trials) > 0.5;
-  const convData = filled.map(c => isMature(c) ? +(c.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = filled.map(c => isMature(c) ? +(c.cancel_rate * 100).toFixed(1) : null);
-  const billingData = filled.map(c => isMature(c) ? +(c.billing_rate * 100).toFixed(1) : null);
-  const inTrialData = filled.map(c => c.total_trials > 0 ? +((c.in_trial / c.total_trials) * 100).toFixed(1) : null);
+  const convData = filled.map(c => c.total_trials > 0 ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filled.map(c => c.total_trials > 0 ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filled.map(c => c.total_trials > 0 ? +(c.billing_rate * 100).toFixed(1) : null);
 
   const trialsData = filled.map(c => c.total_trials || 0);
 
@@ -865,13 +862,6 @@ function renderCohortChart(cohorts, granularity) {
           label: 'Billing Issue %', data: billingData,
           borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)',
           fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
-          yAxisID: 'y', order: 0,
-        },
-        {
-          label: 'Still in Trial %', data: inTrialData,
-          borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.1)',
-          fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
-          borderDash: [6, 3],
           yAxisID: 'y', order: 0,
         },
       ]
