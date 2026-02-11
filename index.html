@@ -79,7 +79,7 @@
 
   .container { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
 
-  /* Upload zone */
+  /* Upload zone — full (no data) */
   .upload-zone {
     border: 2px dashed var(--border);
     border-radius: 12px;
@@ -98,7 +98,6 @@
 
   .upload-zone h3 { font-size: 16px; margin-bottom: 8px; }
   .upload-zone p { font-size: 13px; color: var(--text-dim); }
-
   .upload-zone input[type="file"] { display: none; }
 
   .upload-row {
@@ -110,10 +109,22 @@
     flex-wrap: wrap;
   }
 
-  .upload-row label {
-    font-size: 13px;
-    color: var(--text-dim);
+  .upload-row label { font-size: 13px; color: var(--text-dim); }
+
+  /* Upload zone — compact (has data) */
+  .upload-zone.compact {
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    text-align: left;
+    border-style: solid;
+    border-width: 1px;
   }
+
+  .upload-zone.compact h3 { font-size: 13px; margin: 0; color: var(--text-dim); white-space: nowrap; }
+  .upload-zone.compact p { display: none; }
+  .upload-zone.compact .upload-row { margin-top: 0; }
 
   /* Processing indicator */
   .processing {
@@ -161,23 +172,9 @@
     margin-bottom: 8px;
   }
 
-  .metric-card .value {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-  }
-
-  .metric-card .sub {
-    font-size: 13px;
-    color: var(--text-dim);
-    margin-top: 4px;
-  }
-
-  .metric-card .delta {
-    font-size: 13px;
-    margin-top: 4px;
-    font-weight: 500;
-  }
+  .metric-card .value { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+  .metric-card .sub { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+  .metric-card .delta { font-size: 13px; margin-top: 4px; font-weight: 500; }
 
   .delta.up { color: var(--green); }
   .delta.down { color: var(--red); }
@@ -252,7 +249,6 @@
 
   .empty-state h2 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
 
-  /* History bar */
   .history-bar {
     display: flex;
     align-items: center;
@@ -261,12 +257,8 @@
     flex-wrap: wrap;
   }
 
-  .history-bar .snapshots-info {
-    font-size: 13px;
-    color: var(--text-dim);
-  }
+  .history-bar .snapshots-info { font-size: 13px; color: var(--text-dim); }
 
-  /* Toast */
   .toast {
     position: fixed;
     bottom: 24px;
@@ -304,12 +296,11 @@
 </div>
 
 <div class="container">
-  <!-- Upload zone -->
   <div class="upload-zone" id="uploadZone">
     <h3>Upload RevenueCat Export</h3>
     <p>Drag & drop a .csv or .csv.gz file (RC "All Users" export)</p>
     <div class="upload-row">
-      <label for="appSelect">App:</label>
+      <label for="uploadAppSelect">App:</label>
       <select id="uploadAppSelect">
         <option value="christian-daily-task">Christian Daily Task</option>
         <option value="girlwalk">GirlWalk</option>
@@ -327,7 +318,6 @@
     </div>
   </div>
 
-  <!-- Dashboard content -->
   <div id="content">
     <div class="empty-state">
       <h2>No data yet</h2>
@@ -337,15 +327,14 @@
 </div>
 
 <script>
-// ─── App config ───
 const APPS = {
-  'christian-daily-task': { name: 'Christian Daily Task', slug: 'christian-daily-task' },
-  'girlwalk': { name: 'GirlWalk', slug: 'girlwalk' },
-  'girltalk': { name: 'GirlTalk', slug: 'girltalk' },
+  'christian-daily-task': { name: 'Christian Daily Task' },
+  'girlwalk': { name: 'GirlWalk' },
+  'girltalk': { name: 'GirlTalk' },
 };
 
 const STORAGE_KEY = 'trial-exit-dashboard-v1';
-let trendChart = null;
+let weeklyChart = null;
 
 // ─── Storage ───
 function loadStorage() {
@@ -367,7 +356,6 @@ function getSnapshots(slug) {
 function addSnapshot(slug, snapshot) {
   const data = loadStorage();
   if (!data[slug]) data[slug] = [];
-  // Replace if same date exists, otherwise append
   const idx = data[slug].findIndex(s => s.date === snapshot.date);
   if (idx >= 0) data[slug][idx] = snapshot;
   else data[slug].push(snapshot);
@@ -381,77 +369,60 @@ function clearAppData(slug) {
   saveStorage(data);
 }
 
+function hasAnyData() {
+  const data = loadStorage();
+  return Object.values(data).some(arr => arr && arr.length > 0);
+}
+
 // ─── CSV parsing ───
 async function readFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
-
-    if (file.name.endsWith('.gz')) {
-      reader.readAsArrayBuffer(file);
-    } else {
-      reader.readAsText(file);
-    }
+    file.name.endsWith('.gz') ? reader.readAsArrayBuffer(file) : reader.readAsText(file);
   });
 }
 
 async function parseCSV(file) {
   let text;
-
   if (file.name.endsWith('.gz')) {
     const buffer = await readFile(file);
-    const decompressed = pako.inflate(new Uint8Array(buffer));
-    text = new TextDecoder().decode(decompressed);
+    text = new TextDecoder().decode(pako.inflate(new Uint8Array(buffer)));
   } else {
     text = await readFile(file);
   }
 
-  // RC uses semicolon separator
   let result = Papa.parse(text, { header: true, delimiter: ';', skipEmptyLines: true });
-
-  // If only 1 column, try comma
   if (result.meta.fields && result.meta.fields.length <= 1) {
     result = Papa.parse(text, { header: true, delimiter: ',', skipEmptyLines: true });
   }
 
-  // Normalize column names
   const fields = result.meta.fields.map(f => f.trim().toLowerCase());
   const rows = result.data.map(row => {
-    const normalized = {};
-    for (const [key, val] of Object.entries(row)) {
-      normalized[key.trim().toLowerCase()] = val;
-    }
-    return normalized;
+    const n = {};
+    for (const [k, v] of Object.entries(row)) n[k.trim().toLowerCase()] = v;
+    return n;
   });
-
   return { fields, rows };
 }
 
-// ─── Classification (matches skill logic exactly) ───
+// ─── Classification ───
 function classifyTrialExit(row) {
   const status = (row.status || '').toLowerCase().trim();
   const spent = parseFloat(row.total_spent) || 0;
   const hasBillingTs = row.most_recent_billing_issues_at && row.most_recent_billing_issues_at.trim() !== '';
-
-  // Priority 1: Still in trial
   if (status === 'free_trial') return 'Still in Trial';
-
-  // Priority 2: Converted (total_spent > 0)
   if (spent > 0) return 'Converted';
-
-  // Priority 3: Billing issue
   if (status.includes('billing_issue') || hasBillingTs) return 'Billing Issue';
-
-  // Priority 4: Cancelled (everything else)
   return 'Cancelled';
 }
 
 function parseTimestamp(val) {
   if (!val || val.trim() === '') return null;
   const num = Number(val);
-  if (!isNaN(num) && num > 1e12) return new Date(num); // milliseconds
-  if (!isNaN(num) && num > 1e9) return new Date(num * 1000); // seconds
+  if (!isNaN(num) && num > 1e12) return new Date(num);
+  if (!isNaN(num) && num > 1e9) return new Date(num * 1000);
   const d = new Date(val);
   return isNaN(d.getTime()) ? null : d;
 }
@@ -461,14 +432,29 @@ function getWeekStart(date) {
   const d = new Date(date);
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d);
-  monday.setDate(diff);
-  return monday.toISOString().split('T')[0];
+  const m = new Date(d);
+  m.setDate(diff);
+  return m.toISOString().split('T')[0];
 }
 
 // ─── Analysis ───
+function computeRates(users) {
+  const resolved = users.filter(u => u.outcome !== 'Still in Trial');
+  const t = resolved.length;
+  const c = resolved.filter(u => u.outcome === 'Converted').length;
+  const ca = resolved.filter(u => u.outcome === 'Cancelled').length;
+  const b = resolved.filter(u => u.outcome === 'Billing Issue').length;
+  const inTrial = users.filter(u => u.outcome === 'Still in Trial').length;
+  return {
+    total_trials: users.length, resolved: t, in_trial: inTrial,
+    converted: c, cancelled: ca, billing_issue: b,
+    conversion_rate: t > 0 ? Math.round((c / t) * 10000) / 10000 : null,
+    cancel_rate: t > 0 ? Math.round((ca / t) * 10000) / 10000 : null,
+    billing_rate: t > 0 ? Math.round((b / t) * 10000) / 10000 : null,
+  };
+}
+
 function analyzeData(rows) {
-  // Classify each user
   const classified = rows.map(row => ({
     outcome: classifyTrialExit(row),
     product: row.latest_product || row.product_identifier || 'unknown',
@@ -476,23 +462,7 @@ function analyzeData(rows) {
     totalSpent: parseFloat(row.total_spent) || 0,
   }));
 
-  const resolved = classified.filter(u => u.outcome !== 'Still in Trial');
-  const total = resolved.length;
-
-  const converted = resolved.filter(u => u.outcome === 'Converted').length;
-  const cancelled = resolved.filter(u => u.outcome === 'Cancelled').length;
-  const billingIssue = resolved.filter(u => u.outcome === 'Billing Issue').length;
-  const inTrial = classified.filter(u => u.outcome === 'Still in Trial').length;
-
-  const overall = {
-    total_trials: classified.length,
-    resolved: total,
-    in_trial: inTrial,
-    converted, cancelled, billing_issue: billingIssue,
-    conversion_rate: total > 0 ? Math.round((converted / total) * 10000) / 10000 : null,
-    cancel_rate: total > 0 ? Math.round((cancelled / total) * 10000) / 10000 : null,
-    billing_rate: total > 0 ? Math.round((billingIssue / total) * 10000) / 10000 : null,
-  };
+  const overall = computeRates(classified);
 
   // Weekly cohorts
   const weekMap = {};
@@ -504,22 +474,9 @@ function analyzeData(rows) {
   });
 
   const weekly_cohorts = Object.keys(weekMap).sort().map(week => {
-    const group = weekMap[week];
-    const res = group.filter(u => u.outcome !== 'Still in Trial');
-    const t = res.length;
-    const c = res.filter(u => u.outcome === 'Converted').length;
-    const ca = res.filter(u => u.outcome === 'Cancelled').length;
-    const b = res.filter(u => u.outcome === 'Billing Issue').length;
-    return {
-      week_start: week,
-      total_trials: group.length,
-      resolved: t,
-      in_trial: group.filter(u => u.outcome === 'Still in Trial').length,
-      converted: c, cancelled: ca, billing_issue: b,
-      conversion_rate: t > 0 ? Math.round((c / t) * 10000) / 10000 : null,
-      cancel_rate: t > 0 ? Math.round((ca / t) * 10000) / 10000 : null,
-      billing_rate: t > 0 ? Math.round((b / t) * 10000) / 10000 : null,
-    };
+    const rates = computeRates(weekMap[week]);
+    rates.week_start = week;
+    return rates;
   });
 
   // Product breakdown
@@ -531,29 +488,15 @@ function analyzeData(rows) {
   });
 
   const products = Object.keys(prodMap).map(prod => {
-    const group = prodMap[prod];
-    const res = group.filter(u => u.outcome !== 'Still in Trial');
-    const t = res.length;
-    const c = res.filter(u => u.outcome === 'Converted').length;
-    const ca = res.filter(u => u.outcome === 'Cancelled').length;
-    const b = res.filter(u => u.outcome === 'Billing Issue').length;
-    return {
-      product_id: prod,
-      total_trials: group.length,
-      resolved: t,
-      converted: c, cancelled: ca, billing_issue: b,
-      conversion_rate: t > 0 ? Math.round((c / t) * 10000) / 10000 : null,
-      cancel_rate: t > 0 ? Math.round((ca / t) * 10000) / 10000 : null,
-      billing_rate: t > 0 ? Math.round((b / t) * 10000) / 10000 : null,
-    };
+    const rates = computeRates(prodMap[prod]);
+    rates.product_id = prod;
+    return rates;
   }).filter(p => p.resolved > 0).sort((a, b) => b.resolved - a.resolved);
 
   return {
     date: new Date().toISOString().split('T')[0],
     generated_at: new Date().toISOString(),
-    overall,
-    weekly_cohorts,
-    products,
+    overall, weekly_cohorts, products,
   };
 }
 
@@ -561,30 +504,23 @@ function analyzeData(rows) {
 async function handleFile(file) {
   const slug = document.getElementById('uploadAppSelect').value;
   const appName = APPS[slug]?.name || slug;
-
   document.getElementById('processingIndicator').style.display = '';
 
   try {
     const { fields, rows } = await parseCSV(file);
-
-    // Validate it looks like an RC export
-    const requiredFields = ['status', 'total_spent'];
-    const hasRequired = requiredFields.every(f => fields.includes(f));
-    if (!hasRequired) {
-      throw new Error(`Missing required columns. Expected: status, total_spent. Found: ${fields.slice(0, 10).join(', ')}`);
+    if (!['status', 'total_spent'].every(f => fields.includes(f))) {
+      throw new Error(`Missing required columns (status, total_spent). Found: ${fields.slice(0, 10).join(', ')}`);
     }
 
     const snapshot = analyzeData(rows);
     snapshot.app = appName;
     snapshot.row_count = rows.length;
-
     addSnapshot(slug, snapshot);
 
-    // Refresh UI
     populateAppSelector();
     document.getElementById('appSelector').value = slug;
+    updateUploadZone();
     renderApp(slug);
-
     showToast(`Processed ${rows.length.toLocaleString()} users for ${appName}`, 'success');
   } catch (err) {
     showToast(`Error: ${err.message}`, 'error');
@@ -594,24 +530,39 @@ async function handleFile(file) {
   }
 }
 
-// ─── UI ───
+// ─── Upload zone state ───
+function updateUploadZone() {
+  const zone = document.getElementById('uploadZone');
+  if (hasAnyData()) {
+    zone.classList.add('compact');
+  } else {
+    zone.classList.remove('compact');
+  }
+}
+
+// ─── UI rendering ───
 function populateAppSelector() {
   const sel = document.getElementById('appSelector');
   const current = sel.value;
   sel.innerHTML = '<option value="">Select app</option>';
-
   const data = loadStorage();
-  const appsWithData = Object.keys(data).filter(slug => data[slug]?.length > 0);
 
   for (const slug of Object.keys(APPS)) {
-    const hasData = appsWithData.includes(slug);
+    const count = data[slug]?.length || 0;
     const opt = document.createElement('option');
     opt.value = slug;
-    opt.textContent = APPS[slug].name + (hasData ? ` (${data[slug].length})` : '');
+    opt.textContent = APPS[slug].name + (count > 0 ? ` (${count})` : '');
     sel.appendChild(opt);
   }
-
   if (current) sel.value = current;
+}
+
+function filterWeeks(weeks, rangeDays) {
+  if (!rangeDays || rangeDays <= 0) return weeks;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - rangeDays);
+  const cutoffStr = cutoff.toISOString().split('T')[0];
+  return weeks.filter(w => w.week_start >= cutoffStr);
 }
 
 function renderApp(slug) {
@@ -637,27 +588,43 @@ function renderApp(slug) {
   }
 
   document.getElementById('clearBtn').style.display = '';
-
-  // Filter by range
-  const rangeDays = parseInt(document.getElementById('rangeSelector').value);
-  let filtered = snapshots;
-  if (rangeDays > 0) {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - rangeDays);
-    const cutoffStr = cutoff.toISOString().split('T')[0];
-    filtered = snapshots.filter(s => s.date >= cutoffStr);
-  }
-
-  if (filtered.length === 0) filtered = snapshots; // fallback to all
-
-  renderDashboard(slug, filtered);
-}
-
-function renderDashboard(slug, snapshots) {
   const latest = snapshots[snapshots.length - 1];
   const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
-  const o = latest.overall;
-  const appName = APPS[slug]?.name || slug;
+
+  // Apply date range filter to weekly cohorts
+  const rangeDays = parseInt(document.getElementById('rangeSelector').value);
+  const allWeeks = latest.weekly_cohorts || [];
+  const filteredWeeks = filterWeeks(allWeeks, rangeDays);
+
+  // Recompute overall from filtered weeks if filtering is active
+  let overall;
+  if (rangeDays > 0 && filteredWeeks.length < allWeeks.length && filteredWeeks.length > 0) {
+    // Sum up from filtered weeks
+    let totalTrials = 0, resolved = 0, inTrial = 0, converted = 0, cancelled = 0, billing = 0;
+    filteredWeeks.forEach(w => {
+      totalTrials += w.total_trials;
+      resolved += w.resolved;
+      inTrial += w.in_trial;
+      converted += w.converted;
+      cancelled += w.cancelled;
+      billing += w.billing_issue;
+    });
+    overall = {
+      total_trials: totalTrials, resolved, in_trial: inTrial,
+      converted, cancelled, billing_issue: billing,
+      conversion_rate: resolved > 0 ? Math.round((converted / resolved) * 10000) / 10000 : null,
+      cancel_rate: resolved > 0 ? Math.round((cancelled / resolved) * 10000) / 10000 : null,
+      billing_rate: resolved > 0 ? Math.round((billing / resolved) * 10000) / 10000 : null,
+    };
+  } else {
+    overall = latest.overall;
+  }
+
+  renderDashboard(slug, latest, prev, overall, filteredWeeks);
+}
+
+function renderDashboard(slug, latest, prev, overall, weeks) {
+  const o = overall;
 
   function delta(current, previous, key, invert = false) {
     if (!previous || current[key] === null || previous.overall[key] === null) return '';
@@ -670,9 +637,12 @@ function renderDashboard(slug, snapshots) {
     return `<span class="delta ${cls}">${arrow} ${Math.abs(diff * 100).toFixed(1)}pp</span>`;
   }
 
+  const rangeDays = parseInt(document.getElementById('rangeSelector').value);
+  const rangeLabel = rangeDays > 0 ? `Last ${rangeDays} days` : 'All time';
+
   document.getElementById('content').innerHTML = `
     <div class="history-bar">
-      <span class="snapshots-info">${snapshots.length} snapshot${snapshots.length > 1 ? 's' : ''} &middot; Latest: ${latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} users</span>
+      <span class="snapshots-info">Uploaded: ${latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} users &middot; Showing: ${rangeLabel} (${weeks.length} weeks)</span>
     </div>
 
     <div class="metrics-row">
@@ -701,11 +671,11 @@ function renderDashboard(slug, snapshots) {
       </div>
     </div>
 
-    ${snapshots.length > 1 ? `
+    ${weeks.length > 0 ? `
     <div class="chart-container">
-      <h2>Rate Trends Over Time</h2>
+      <h2>Weekly Cohort Trends</h2>
       <div class="chart-wrapper">
-        <canvas id="trendChart"></canvas>
+        <canvas id="weeklyChart"></canvas>
       </div>
     </div>` : ''}
 
@@ -721,21 +691,24 @@ function renderDashboard(slug, snapshots) {
     </div>
   `;
 
-  if (snapshots.length > 1) renderTrendChart(snapshots);
-  renderWeeklyTable(latest);
+  if (weeks.length > 0) renderWeeklyChart(weeks);
+  renderWeeklyTable(weeks);
   renderProductTable(latest);
 }
 
-function renderTrendChart(snapshots) {
-  const ctx = document.getElementById('trendChart').getContext('2d');
-  if (trendChart) trendChart.destroy();
+function renderWeeklyChart(weeks) {
+  const ctx = document.getElementById('weeklyChart').getContext('2d');
+  if (weeklyChart) weeklyChart.destroy();
 
-  const labels = snapshots.map(s => s.date);
-  const convData = snapshots.map(s => s.overall.conversion_rate !== null ? +(s.overall.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = snapshots.map(s => s.overall.cancel_rate !== null ? +(s.overall.cancel_rate * 100).toFixed(1) : null);
-  const billingData = snapshots.map(s => s.overall.billing_rate !== null ? +(s.overall.billing_rate * 100).toFixed(1) : null);
+  // Only chart weeks with resolved > 0 for meaningful rates
+  const chartWeeks = weeks.filter(w => w.resolved > 0);
 
-  trendChart = new Chart(ctx, {
+  const labels = chartWeeks.map(w => w.week_start);
+  const convData = chartWeeks.map(w => w.conversion_rate !== null ? +(w.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = chartWeeks.map(w => w.cancel_rate !== null ? +(w.cancel_rate * 100).toFixed(1) : null);
+  const billingData = chartWeeks.map(w => w.billing_rate !== null ? +(w.billing_rate * 100).toFixed(1) : null);
+
+  weeklyChart = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
@@ -766,20 +739,20 @@ function renderTrendChart(snapshots) {
         tooltip: {
           backgroundColor: '#1a1d27', borderColor: '#2e3345', borderWidth: 1,
           titleColor: '#e1e4ed', bodyColor: '#e1e4ed',
-          callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}%` }
+          callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` }
         }
       },
       scales: {
         x: { grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', maxRotation: 45 } },
-        y: { grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', callback: v => v + '%' }, min: 0, max: 100 }
+        y: { grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', callback: v => v + '%' }, min: 0, suggestedMax: 100 }
       }
     }
   });
 }
 
-function renderWeeklyTable(snapshot) {
+function renderWeeklyTable(weeks) {
   const table = document.getElementById('weeklyTable');
-  const weeks = (snapshot.weekly_cohorts || []).slice(-12);
+  const recentWeeks = weeks.slice(-12);
 
   let html = `
     <thead><tr>
@@ -790,7 +763,7 @@ function renderWeeklyTable(snapshot) {
       <th class="text-right">Billing%</th>
     </tr></thead><tbody>`;
 
-  weeks.forEach(w => {
+  recentWeeks.forEach(w => {
     const convBadge = w.conversion_rate !== null
       ? `<span class="badge ${w.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(w.conversion_rate * 100).toFixed(1)}%</span>` : '—';
     const cancelPct = w.cancel_rate !== null ? `${(w.cancel_rate * 100).toFixed(1)}%` : '—';
@@ -806,7 +779,7 @@ function renderWeeklyTable(snapshot) {
     </tr>`;
   });
 
-  if (weeks.length === 0) html += '<tr><td colspan="5" style="text-align:center; color: var(--text-dim)">No weekly data</td></tr>';
+  if (recentWeeks.length === 0) html += '<tr><td colspan="5" style="text-align:center; color: var(--text-dim)">No weekly data in this range</td></tr>';
   html += '</tbody>';
   table.innerHTML = html;
 }
@@ -848,42 +821,20 @@ function showToast(msg, type = 'success') {
   setTimeout(() => toast.remove(), 5000);
 }
 
-// ─── Event listeners ───
+// ─── Events ───
 const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
 
-document.getElementById('browseBtn').addEventListener('click', (e) => {
-  e.stopPropagation();
-  fileInput.click();
+document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+uploadZone.addEventListener('click', e => {
+  if (!['SELECT','BUTTON','OPTION'].includes(e.target.tagName)) fileInput.click();
 });
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; });
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
 
-uploadZone.addEventListener('click', (e) => {
-  if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'OPTION') {
-    fileInput.click();
-  }
-});
-
-fileInput.addEventListener('change', (e) => {
-  if (e.target.files[0]) handleFile(e.target.files[0]);
-  e.target.value = '';
-});
-
-uploadZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  uploadZone.classList.add('dragover');
-});
-
-uploadZone.addEventListener('dragleave', () => {
-  uploadZone.classList.remove('dragover');
-});
-
-uploadZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  uploadZone.classList.remove('dragover');
-  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-});
-
-document.getElementById('appSelector').addEventListener('change', (e) => renderApp(e.target.value));
+document.getElementById('appSelector').addEventListener('change', e => renderApp(e.target.value));
 document.getElementById('rangeSelector').addEventListener('change', () => {
   const slug = document.getElementById('appSelector').value;
   if (slug) renderApp(slug);
@@ -895,15 +846,16 @@ document.getElementById('clearBtn').addEventListener('click', () => {
   if (confirm(`Clear all stored data for ${APPS[slug]?.name || slug}?`)) {
     clearAppData(slug);
     populateAppSelector();
+    updateUploadZone();
     renderApp(slug);
     showToast('Data cleared', 'success');
   }
 });
 
-// Init
+// ─── Init ───
 populateAppSelector();
+updateUploadZone();
 
-// Auto-load first app with data
 const stored = loadStorage();
 const firstWithData = Object.keys(APPS).find(slug => stored[slug]?.length > 0);
 if (firstWithData) {
