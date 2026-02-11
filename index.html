@@ -351,6 +351,7 @@ const APPS = {
 };
 
 const STORAGE_KEY = 'trial-exit-dashboard-v2';
+const MIN_TRIALS_FOR_RATE = 5; // Don't show rates for cohorts with fewer trials (too noisy)
 let cohortChart = null;
 
 // ─── Storage ───
@@ -546,7 +547,7 @@ function analyzeData(rows) {
     const rates = computeRates(prodMap[prod]);
     rates.product_id = prod;
     return rates;
-  }).filter(p => p.resolved > 0).sort((a, b) => b.resolved - a.resolved);
+  }).filter(p => p.total_trials > 0).sort((a, b) => b.total_trials - a.total_trials);
 
   return {
     date: new Date().toISOString().split('T')[0],
@@ -827,9 +828,10 @@ function renderCohortChart(cohorts, granularity) {
   const filled = fillTimelineGaps(cohorts, granularity);
   // Only show rates for periods with resolved data; null otherwise (gaps in chart line)
   const labels = filled.map(c => c.period);
-  const convData = filled.map(c => c.total_trials > 0 ? +(c.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = filled.map(c => c.total_trials > 0 ? +(c.cancel_rate * 100).toFixed(1) : null);
-  const billingData = filled.map(c => c.total_trials > 0 ? +(c.billing_rate * 100).toFixed(1) : null);
+  // Only show rates when cohort has enough trials for meaningful data
+  const convData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.billing_rate * 100).toFixed(1) : null);
 
   const trialsData = filled.map(c => c.total_trials || 0);
 
@@ -905,15 +907,18 @@ function renderCohortTable(cohorts, granLabel) {
     </tr></thead><tbody>`;
 
   recent.forEach(c => {
+    const lowSample = c.total_trials < MIN_TRIALS_FOR_RATE;
+    const dimStyle = lowSample ? ' style="opacity:0.35"' : '';
     const convBadge = c.conversion_rate !== null
-      ? `<span class="badge ${c.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(c.conversion_rate * 100).toFixed(1)}%</span>` : '—';
-    const cancelPct = c.cancel_rate !== null ? `${(c.cancel_rate * 100).toFixed(1)}%` : '—';
+      ? `<span class="badge ${c.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}"${dimStyle}>${(c.conversion_rate * 100).toFixed(1)}%</span>` : '—';
+    const cancelPct = c.cancel_rate !== null
+      ? `<span${dimStyle}>${(c.cancel_rate * 100).toFixed(1)}%</span>` : '—';
     const billingBadge = c.billing_rate !== null
-      ? `<span class="badge ${c.billing_rate >= 0.4 ? 'badge-red' : c.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}">${(c.billing_rate * 100).toFixed(1)}%</span>` : '—';
+      ? `<span class="badge ${c.billing_rate >= 0.4 ? 'badge-red' : c.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}"${dimStyle}>${(c.billing_rate * 100).toFixed(1)}%</span>` : '—';
 
     html += `<tr>
       <td>${c.period}</td>
-      <td class="text-right">${c.total_trials}</td>
+      <td class="text-right">${c.total_trials}${lowSample ? '<span style="color:var(--text-dim);font-size:11px"> ⚬</span>' : ''}</td>
       <td class="text-right">${convBadge}</td>
       <td class="text-right">${cancelPct}</td>
       <td class="text-right">${billingBadge}</td>
@@ -927,23 +932,25 @@ function renderCohortTable(cohorts, granLabel) {
 
 function renderProductTable(snapshot) {
   const table = document.getElementById('productTable');
-  const products = (snapshot.products || []).filter(p => p.resolved > 0);
+  const products = (snapshot.products || []).filter(p => p.total_trials > 0);
 
   let html = `
     <thead><tr>
       <th>Product</th>
-      <th class="text-right">Resolved</th>
+      <th class="text-right">Trials</th>
       <th class="text-right">Conv%</th>
       <th class="text-right">Billing%</th>
     </tr></thead><tbody>`;
 
   products.forEach(p => {
     const shortName = p.product_id.split('.').pop() || p.product_id;
+    const lowSample = p.total_trials < MIN_TRIALS_FOR_RATE;
+    const dimStyle = lowSample ? ' style="opacity:0.35"' : '';
     html += `<tr>
       <td title="${p.product_id}">${shortName}</td>
-      <td class="text-right">${p.resolved}</td>
-      <td class="text-right"><span class="badge ${p.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}">${(p.conversion_rate * 100).toFixed(1)}%</span></td>
-      <td class="text-right"><span class="badge ${p.billing_rate >= 0.4 ? 'badge-red' : 'badge-yellow'}">${(p.billing_rate * 100).toFixed(1)}%</span></td>
+      <td class="text-right">${p.total_trials}${lowSample ? '<span style="color:var(--text-dim);font-size:11px"> ⚬</span>' : ''}</td>
+      <td class="text-right"><span class="badge ${p.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}"${dimStyle}>${(p.conversion_rate * 100).toFixed(1)}%</span></td>
+      <td class="text-right"><span class="badge ${p.billing_rate >= 0.4 ? 'badge-red' : 'badge-yellow'}"${dimStyle}>${(p.billing_rate * 100).toFixed(1)}%</span></td>
     </tr>`;
   });
 
