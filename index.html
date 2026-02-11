@@ -292,6 +292,10 @@
   .toast.error { background: rgba(248,113,113,0.2); border: 1px solid var(--red); color: var(--red); }
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  tr.incomplete td { border-left: 3px dashed rgba(96,165,250,0.4); }
+  tr.incomplete td:first-child { padding-left: 9px; }
+  .incomplete-tag { font-size: 11px; color: var(--blue); opacity: 0.7; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -352,7 +356,38 @@ const APPS = {
 
 const STORAGE_KEY = 'trial-exit-dashboard-v2';
 const MIN_TRIALS_FOR_RATE = 5; // Don't show rates for cohorts with fewer trials (too noisy)
+const TRIAL_DAYS = 3; // Trial length in days; cohorts within this window are "incomplete"
 let cohortChart = null;
+
+// ─── Incomplete cohort detection ───
+function isIncomplete(period, granularity) {
+  const now = new Date();
+  const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - TRIAL_DAYS));
+  if (granularity === 'monthly') {
+    const [y, m] = period.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(y, m, 0)); // last day of that month
+    return lastDay >= cutoff;
+  } else if (granularity === 'weekly') {
+    const d = new Date(period + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 6); // Sunday end of week
+    return d >= cutoff;
+  } else {
+    return new Date(period + 'T12:00:00Z') >= cutoff;
+  }
+}
+
+function createStripePattern(ctx) {
+  const size = 8;
+  const pCanvas = document.createElement('canvas');
+  pCanvas.width = size; pCanvas.height = size;
+  const pCtx = pCanvas.getContext('2d');
+  pCtx.strokeStyle = 'rgba(160,174,192,0.35)';
+  pCtx.lineWidth = 2;
+  pCtx.beginPath();
+  pCtx.moveTo(0, size); pCtx.lineTo(size, 0);
+  pCtx.stroke();
+  return ctx.createPattern(pCanvas, 'repeat');
+}
 
 // ─── Storage ───
 function loadStorage() {
@@ -777,7 +812,7 @@ function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
   `;
 
   if (cohorts.length > 0) renderCohortChart(cohorts, granularity);
-  renderCohortTable(cohorts, granLabel);
+  renderCohortTable(cohorts, granLabel, granularity);
   renderProductTable(latest);
 }
 
@@ -826,14 +861,46 @@ function renderCohortChart(cohorts, granularity) {
 
   // Fill gaps so the timeline is continuous
   const filled = fillTimelineGaps(cohorts, granularity);
-  // Only show rates for periods with resolved data; null otherwise (gaps in chart line)
   const labels = filled.map(c => c.period);
   // Only show rates when cohort has enough trials for meaningful data
   const convData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.conversion_rate * 100).toFixed(1) : null);
   const cancelData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.cancel_rate * 100).toFixed(1) : null);
   const billingData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.billing_rate * 100).toFixed(1) : null);
-
   const trialsData = filled.map(c => c.total_trials || 0);
+
+  // Incomplete cohort detection: hatched bars + cutoff line
+  const incompleteFlags = filled.map(c => isIncomplete(c.period, granularity));
+  const firstIncompleteIdx = incompleteFlags.indexOf(true);
+  const stripePattern = createStripePattern(ctx);
+  const barBgColors = incompleteFlags.map(inc => inc ? stripePattern : 'rgba(160,174,192,0.15)');
+  const barBorderColors = incompleteFlags.map(inc => inc ? 'rgba(96,165,250,0.4)' : 'rgba(160,174,192,0.25)');
+
+  // Plugin: draw vertical dashed cutoff line
+  const cutoffLinePlugin = {
+    id: 'cutoffLine',
+    afterDraw(chart) {
+      if (firstIncompleteIdx < 0) return;
+      const xScale = chart.scales.x;
+      const x = xScale.getPixelForValue(firstIncompleteIdx) - (xScale.getPixelForValue(1) - xScale.getPixelForValue(0)) / 2;
+      const { top, bottom } = chart.chartArea;
+      const drawCtx = chart.ctx;
+      drawCtx.save();
+      drawCtx.setLineDash([6, 4]);
+      drawCtx.strokeStyle = 'rgba(96,165,250,0.5)';
+      drawCtx.lineWidth = 1.5;
+      drawCtx.beginPath();
+      drawCtx.moveTo(x, top);
+      drawCtx.lineTo(x, bottom);
+      drawCtx.stroke();
+      // Label
+      drawCtx.setLineDash([]);
+      drawCtx.font = '10px -apple-system, sans-serif';
+      drawCtx.fillStyle = 'rgba(96,165,250,0.7)';
+      drawCtx.textAlign = 'left';
+      drawCtx.fillText('← complete | incomplete →', x + 4, top + 12);
+      drawCtx.restore();
+    }
+  };
 
   cohortChart = new Chart(ctx, {
     type: 'line',
@@ -843,8 +910,8 @@ function renderCohortChart(cohorts, granularity) {
         {
           label: 'Trials', data: trialsData,
           type: 'bar', yAxisID: 'y1',
-          backgroundColor: 'rgba(160,174,192,0.15)',
-          borderColor: 'rgba(160,174,192,0.25)',
+          backgroundColor: barBgColors,
+          borderColor: barBorderColors,
           borderWidth: 1, borderRadius: 3,
           order: 1,
         },
@@ -878,6 +945,10 @@ function renderCohortChart(cohorts, granularity) {
           backgroundColor: '#1a1d27', borderColor: '#2e3345', borderWidth: 1,
           titleColor: '#e1e4ed', bodyColor: '#e1e4ed',
           callbacks: {
+            afterTitle: items => {
+              const idx = items[0]?.dataIndex;
+              return (idx !== undefined && incompleteFlags[idx]) ? '⏳ Incomplete (trials still active)' : '';
+            },
             label: c => c.dataset.label === 'Trials'
               ? `${c.dataset.label}: ${c.parsed.y}`
               : `${c.dataset.label}: ${c.parsed.y}%`
@@ -889,11 +960,12 @@ function renderCohortChart(cohorts, granularity) {
         y: { position: 'left', grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', callback: v => v + '%' }, min: 0, suggestedMax: 100 },
         y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#555d70' }, min: 0, title: { display: true, text: 'Trials', color: '#555d70', font: { size: 11 } } }
       }
-    }
+    },
+    plugins: [cutoffLinePlugin]
   });
 }
 
-function renderCohortTable(cohorts, granLabel) {
+function renderCohortTable(cohorts, granLabel, granularity) {
   const table = document.getElementById('cohortTable');
   const recent = cohorts.slice(-20);
 
@@ -908,6 +980,7 @@ function renderCohortTable(cohorts, granLabel) {
 
   recent.forEach(c => {
     const lowSample = c.total_trials < MIN_TRIALS_FOR_RATE;
+    const incomplete = isIncomplete(c.period, granularity);
     const dimStyle = lowSample ? ' style="opacity:0.35"' : '';
     const convBadge = c.conversion_rate !== null
       ? `<span class="badge ${c.conversion_rate >= 0.25 ? 'badge-green' : 'badge-red'}"${dimStyle}>${(c.conversion_rate * 100).toFixed(1)}%</span>` : '—';
@@ -915,9 +988,10 @@ function renderCohortTable(cohorts, granLabel) {
       ? `<span${dimStyle}>${(c.cancel_rate * 100).toFixed(1)}%</span>` : '—';
     const billingBadge = c.billing_rate !== null
       ? `<span class="badge ${c.billing_rate >= 0.4 ? 'badge-red' : c.billing_rate >= 0.25 ? 'badge-yellow' : 'badge-green'}"${dimStyle}>${(c.billing_rate * 100).toFixed(1)}%</span>` : '—';
+    const incTag = incomplete ? '<span class="incomplete-tag">⏳</span>' : '';
 
-    html += `<tr>
-      <td>${c.period}</td>
+    html += `<tr${incomplete ? ' class="incomplete"' : ''}>
+      <td>${c.period}${incTag}</td>
       <td class="text-right">${c.total_trials}${lowSample ? '<span style="color:var(--text-dim);font-size:11px"> ⚬</span>' : ''}</td>
       <td class="text-right">${convBadge}</td>
       <td class="text-right">${cancelPct}</td>
