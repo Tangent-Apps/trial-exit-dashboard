@@ -830,6 +830,7 @@ function renderCohortChart(cohorts, granularity) {
   const convData = filled.map(c => c.resolved > 0 && c.conversion_rate !== null ? +(c.conversion_rate * 100).toFixed(1) : null);
   const cancelData = filled.map(c => c.resolved > 0 && c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
   const billingData = filled.map(c => c.resolved > 0 && c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
+  const inTrialData = filled.map(c => c.total_trials > 0 ? +((c.in_trial / c.total_trials) * 100).toFixed(1) : null);
 
   const trialsData = filled.map(c => c.total_trials || 0);
 
@@ -862,6 +863,13 @@ function renderCohortChart(cohorts, granularity) {
           label: 'Billing Issue %', data: billingData,
           borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)',
           fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          yAxisID: 'y', order: 0,
+        },
+        {
+          label: 'Still in Trial %', data: inTrialData,
+          borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.1)',
+          fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          borderDash: [6, 3],
           yAxisID: 'y', order: 0,
         },
       ]
