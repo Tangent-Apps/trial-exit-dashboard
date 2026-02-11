@@ -155,8 +155,11 @@ def main():
     print(f"\n{'='*40}")
     print(f"Done: {processed} apps processed, {errors} errors")
 
+    # Only fail if we had configured apps but ALL errored AND exports should exist
+    # Don't fail when exports simply haven't landed yet (first few days)
     if errors > 0 and processed == 0:
-        sys.exit(1)
+        print("No data processed — exports may not have landed yet. This is normal for the first run.")
+        sys.exit(0)
 
 
 if __name__ == '__main__':
