@@ -379,7 +379,7 @@
         <input type="file" id="fileInput" accept=".csv,.gz,.csv.gz">
       </div>
     </div>
-    <div class="settings-wrapper">
+    <div class="settings-wrapper" style="display:none" id="settingsWrapper">
       <button class="settings-btn" id="settingsBtn" title="Settings">⚙</button>
       <div class="settings-popover" id="settingsPopover">
         <label for="ghTokenInput">GitHub Personal Access Token</label>
@@ -1242,6 +1242,24 @@ document.getElementById('clearTokenBtn').addEventListener('click', () => {
   document.getElementById('ghTokenInput').value = '';
   updateTokenStatus();
   showToast('Token cleared', 'success');
+});
+
+// ─── Secret shortcut: press S three times to reveal settings ───
+let sCount = 0, sTimer = null;
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 's' || e.key === 'S') {
+    sCount++;
+    clearTimeout(sTimer);
+    sTimer = setTimeout(() => { sCount = 0; }, 800);
+    if (sCount >= 3) {
+      const w = document.getElementById('settingsWrapper');
+      w.style.display = w.style.display === 'none' ? '' : 'none';
+      sCount = 0;
+    }
+  } else {
+    sCount = 0;
+  }
 });
 
 // ─── Init ───
