@@ -831,25 +831,38 @@ function renderCohortChart(cohorts, granularity) {
   const cancelData = filled.map(c => c.resolved > 0 && c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
   const billingData = filled.map(c => c.resolved > 0 && c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
 
+  const trialsData = filled.map(c => c.total_trials || 0);
+
   cohortChart = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
       datasets: [
         {
+          label: 'Trials', data: trialsData,
+          type: 'bar', yAxisID: 'y1',
+          backgroundColor: 'rgba(160,174,192,0.15)',
+          borderColor: 'rgba(160,174,192,0.25)',
+          borderWidth: 1, borderRadius: 3,
+          order: 1,
+        },
+        {
           label: 'Conversion %', data: convData,
           borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)',
-          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          yAxisID: 'y', order: 0,
         },
         {
           label: 'Cancel %', data: cancelData,
           borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)',
-          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          yAxisID: 'y', order: 0,
         },
         {
           label: 'Billing Issue %', data: billingData,
           borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)',
-          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          fill: false, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
+          yAxisID: 'y', order: 0,
         },
       ]
     },
@@ -862,12 +875,17 @@ function renderCohortChart(cohorts, granularity) {
         tooltip: {
           backgroundColor: '#1a1d27', borderColor: '#2e3345', borderWidth: 1,
           titleColor: '#e1e4ed', bodyColor: '#e1e4ed',
-          callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` }
+          callbacks: {
+            label: c => c.dataset.label === 'Trials'
+              ? `${c.dataset.label}: ${c.parsed.y}`
+              : `${c.dataset.label}: ${c.parsed.y}%`
+          }
         }
       },
       scales: {
         x: { grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', maxRotation: 45 } },
-        y: { grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', callback: v => v + '%' }, min: 0, suggestedMax: 100 }
+        y: { position: 'left', grid: { color: '#2e3345' }, ticks: { color: '#8b90a0', callback: v => v + '%' }, min: 0, suggestedMax: 100 },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#555d70' }, min: 0, title: { display: true, text: 'Trials', color: '#555d70', font: { size: 11 } } }
       }
     }
   });
