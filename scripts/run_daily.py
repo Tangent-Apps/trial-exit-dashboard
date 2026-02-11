@@ -2,6 +2,9 @@
 """
 Daily orchestrator: downloads latest RC exports from GCS, runs analysis, updates index.
 Called by GitHub Action on a daily cron schedule.
+
+RC exports land as: {bucket}/{date}/transactions_{timestamp}.csv.gz
+Each file is a separate app's export. We identify apps from the data content.
 """
 
 import json
@@ -14,17 +17,38 @@ from pathlib import Path
 from google.cloud import storage
 
 
-def find_latest_export(bucket, prefix):
-    """Find the most recent RC export file in a GCS prefix."""
-    blobs = list(bucket.list_blobs(prefix=prefix))
-    csv_blobs = [b for b in blobs if b.name.endswith('.csv.gz') or b.name.endswith('.csv')]
+def find_latest_date_folder(bucket):
+    """Find the most recent date folder in the bucket."""
+    # List all blobs to find date prefixes
+    blobs = list(bucket.list_blobs(delimiter='/'))
+    prefixes = list(bucket.list_blobs(delimiter='/'))
 
-    if not csv_blobs:
+    # Get unique date prefixes
+    date_folders = set()
+    iterator = bucket.list_blobs(delimiter='/')
+    # Consume the iterator to populate prefixes
+    list(iterator)
+    for prefix in iterator.prefixes:
+        folder = prefix.rstrip('/')
+        # Check if it looks like a date (YYYY-MM-DD)
+        try:
+            datetime.strptime(folder, '%Y-%m-%d')
+            date_folders.add(folder)
+        except ValueError:
+            continue
+
+    if not date_folders:
         return None
 
-    # Sort by time_created descending to get the latest
-    csv_blobs.sort(key=lambda b: b.time_created, reverse=True)
-    return csv_blobs[0]
+    return sorted(date_folders)[-1]  # Latest date
+
+
+def find_export_files(bucket, date_folder):
+    """Find all export CSV files in a date folder."""
+    prefix = f"{date_folder}/"
+    blobs = list(bucket.list_blobs(prefix=prefix))
+    csv_blobs = [b for b in blobs if b.name.endswith('.csv.gz') or b.name.endswith('.csv')]
+    return csv_blobs
 
 
 def download_blob(blob, dest_path):
@@ -34,14 +58,71 @@ def download_blob(blob, dest_path):
     print(f"  Downloaded {blob.name} ({size_mb:.1f} MB)")
 
 
-def update_index(data_dir):
+def detect_app_from_file(filepath):
+    """Read a CSV file and try to detect which app it belongs to."""
+    import pandas as pd
+
+    fp = str(filepath)
+    compression = 'gzip' if fp.endswith('.gz') else None
+
+    try:
+        df = pd.read_csv(fp, sep=';', compression=compression, nrows=5)
+        if len(df.columns) <= 1:
+            df = pd.read_csv(fp, sep=',', compression=compression, nrows=5)
+    except Exception as e:
+        print(f"  Error reading {filepath}: {e}")
+        return None, None
+
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Try to find app/project identifier
+    for col in ['project_name', 'app_name', 'project_id', 'app_id', 'rc_original_app_user_id']:
+        if col in df.columns:
+            val = df[col].dropna().iloc[0] if len(df[col].dropna()) > 0 else None
+            if val and col in ['project_name', 'app_name']:
+                return str(val).strip(), col
+            elif val and col in ['project_id', 'app_id']:
+                return str(val).strip(), col
+
+    # Try to identify from product_identifier prefix
+    if 'product_identifier' in df.columns:
+        prod = df['product_identifier'].dropna().iloc[0] if len(df['product_identifier'].dropna()) > 0 else None
+        if prod:
+            return str(prod).strip(), 'product_identifier'
+
+    return None, None
+
+
+def match_app_to_config(detected_id, detected_col, config_apps):
+    """Try to match a detected app identifier to our config."""
+    if detected_id is None:
+        return None
+
+    detected_lower = detected_id.lower()
+
+    for app in config_apps:
+        # Match by project ID
+        if app.get('rc_project_id', '').lower() in detected_lower or detected_lower in app.get('rc_project_id', '').lower():
+            return app
+
+        # Match by name
+        if app['name'].lower() in detected_lower or detected_lower in app['name'].lower():
+            return app
+
+        # Match by slug
+        if app['slug'].lower() in detected_lower or detected_lower in app['slug'].lower():
+            return app
+
+        # Match by product identifier prefix (e.g., com.tangent.girltalk)
+        if app['slug'].replace('-', '') in detected_lower.replace('.', '').replace('-', ''):
+            return app
+
+    return None
+
+
+def update_index(data_dir, config):
     """Regenerate data/index.json from the files on disk."""
     index_path = data_dir / 'index.json'
-
-    # Load config for app names
-    config_path = Path(__file__).parent / 'config.json'
-    with open(config_path) as f:
-        config = json.load(f)
 
     app_names = {app['slug']: app['name'] for app in config['apps']}
     apps = [app['slug'] for app in config['apps']]
@@ -51,9 +132,7 @@ def update_index(data_dir):
         app_dir = data_dir / app_slug
         if not app_dir.exists():
             continue
-        dates = sorted([
-            f.stem for f in app_dir.glob('*.json')
-        ])
+        dates = sorted([f.stem for f in app_dir.glob('*.json')])
         if dates:
             data[app_slug] = dates
 
@@ -71,12 +150,10 @@ def update_index(data_dir):
 
 
 def main():
-    # Paths
     repo_root = Path(__file__).parent.parent
     config_path = Path(__file__).parent / 'config.json'
     data_dir = repo_root / 'data'
 
-    # Load config
     with open(config_path) as f:
         config = json.load(f)
 
@@ -85,41 +162,57 @@ def main():
         print("ERROR: gcs_bucket not set in config.json")
         sys.exit(1)
 
-    # Init GCS client (uses GOOGLE_APPLICATION_CREDENTIALS env var)
+    # Init GCS client
     client = storage.Client()
     bucket = client.bucket(bucket_name)
 
     today = datetime.utcnow().strftime('%Y-%m-%d')
+
+    # Find the latest date folder
+    latest_date = find_latest_date_folder(bucket)
+    if not latest_date:
+        print("No date folders found in bucket. Exports may not have run yet.")
+        update_index(data_dir, config)
+        sys.exit(0)
+
+    print(f"Latest export date: {latest_date}")
+
+    # Find all export files in that folder
+    export_files = find_export_files(bucket, latest_date)
+    if not export_files:
+        print(f"No export files found in {latest_date}/")
+        update_index(data_dir, config)
+        sys.exit(0)
+
+    print(f"Found {len(export_files)} export files")
+
     processed = 0
-    errors = 0
+    unmatched = 0
 
-    for app in config['apps']:
-        app_name = app['name']
-        app_slug = app['slug']
-        rc_project_id = app.get('rc_project_id', '')
+    for blob in export_files:
+        print(f"\n[Processing {blob.name}]")
 
-        if not rc_project_id:
-            print(f"\n[SKIP] {app_name}: no rc_project_id configured")
-            continue
-
-        print(f"\n[{app_name}]")
-
-        # RC scheduled exports land under: {project_id}/
-        prefix = f"{rc_project_id}/"
-        latest_blob = find_latest_export(bucket, prefix)
-
-        if not latest_blob:
-            print(f"  No export files found under gs://{bucket_name}/{prefix}")
-            errors += 1
-            continue
-
-        # Download to temp file
-        suffix = '.csv.gz' if latest_blob.name.endswith('.gz') else '.csv'
+        suffix = '.csv.gz' if blob.name.endswith('.gz') else '.csv'
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = tmp.name
 
         try:
-            download_blob(latest_blob, tmp_path)
+            download_blob(blob, tmp_path)
+
+            # Detect which app this file belongs to
+            detected_id, detected_col = detect_app_from_file(tmp_path)
+            print(f"  Detected: {detected_id} (from {detected_col})")
+
+            app_config = match_app_to_config(detected_id, detected_col, config['apps'])
+
+            if app_config is None:
+                print(f"  Could not match to any configured app, skipping")
+                unmatched += 1
+                continue
+
+            app_name = app_config['name']
+            app_slug = app_config['slug']
+            print(f"  Matched to: {app_name} ({app_slug})")
 
             # Run analysis
             from analyze import generate_json
@@ -127,13 +220,11 @@ def main():
 
             if result is None:
                 print(f"  No trial data found")
-                errors += 1
                 continue
 
-            # Override date to today (the snapshot date)
             result['date'] = today
-            result['export_file'] = latest_blob.name
-            result['export_created'] = latest_blob.time_created.isoformat()
+            result['export_file'] = blob.name
+            result['export_date'] = latest_date
 
             # Save JSON
             output_dir = data_dir / app_slug
@@ -150,14 +241,13 @@ def main():
             os.unlink(tmp_path)
 
     # Update index
-    update_index(data_dir)
+    update_index(data_dir, config)
 
     print(f"\n{'='*40}")
-    print(f"Done: {processed} apps processed, {errors} errors")
+    print(f"Done: {processed} apps processed, {unmatched} unmatched files")
 
-    # Only fail if we had configured apps but ALL errored AND exports should exist
     # Don't fail when exports simply haven't landed yet (first few days)
-    if errors > 0 and processed == 0:
+    if processed == 0:
         print("No data processed — exports may not have landed yet. This is normal for the first run.")
         sys.exit(0)
 
