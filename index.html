@@ -865,10 +865,9 @@ function renderCohortChart(cohorts, granularity) {
   // Fill gaps so the timeline is continuous
   const filled = fillTimelineGaps(cohorts, granularity);
   const labels = filled.map(c => c.period);
-  // Only show rates when cohort has enough trials for meaningful data
-  const convData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.cancel_rate * 100).toFixed(1) : null);
-  const billingData = filled.map(c => c.total_trials >= MIN_TRIALS_FOR_RATE ? +(c.billing_rate * 100).toFixed(1) : null);
+  const convData = filled.map(c => c.total_trials > 0 ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filled.map(c => c.total_trials > 0 ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filled.map(c => c.total_trials > 0 ? +(c.billing_rate * 100).toFixed(1) : null);
   const trialsData = filled.map(c => c.total_trials || 0);
 
   // Incomplete cohort detection: hatched bars + cutoff line
