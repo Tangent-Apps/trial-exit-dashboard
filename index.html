@@ -79,52 +79,69 @@
 
   .container { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
 
-  /* Upload zone — full (no data) */
-  .upload-zone {
-    border: 2px dashed var(--border);
-    border-radius: 12px;
-    padding: 40px 24px;
-    text-align: center;
-    margin-bottom: 24px;
-    transition: all 0.2s;
-    cursor: pointer;
+  /* Upload popover */
+  .upload-wrapper { position: relative; }
+
+  .upload-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
     background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    z-index: 100;
+    min-width: 260px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
 
-  .upload-zone:hover, .upload-zone.dragover {
+  .upload-popover.open { display: block; }
+
+  .upload-popover label { font-size: 13px; color: var(--text-dim); display: block; margin-bottom: 6px; }
+
+  .upload-popover select {
+    width: 100%;
+    margin-bottom: 12px;
+  }
+
+  .upload-popover .upload-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .upload-popover .upload-actions button { flex: 1; }
+
+  .upload-popover input[type="file"] { display: none; }
+
+  /* Full-page empty state with upload prompt */
+  .empty-upload {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 60px 24px;
+    text-align: center;
+    cursor: pointer;
+    background: var(--surface);
+    transition: all 0.2s;
+  }
+
+  .empty-upload:hover {
     border-color: var(--blue);
     background: rgba(96,165,250,0.05);
   }
 
-  .upload-zone h3 { font-size: 16px; margin-bottom: 8px; }
-  .upload-zone p { font-size: 13px; color: var(--text-dim); }
-  .upload-zone input[type="file"] { display: none; }
+  .empty-upload h2 { font-size: 20px; margin-bottom: 8px; }
+  .empty-upload p { font-size: 14px; color: var(--text-dim); margin-bottom: 16px; }
 
-  .upload-row {
+  .empty-upload .inline-upload {
     display: flex;
     gap: 12px;
     align-items: center;
     justify-content: center;
-    margin-top: 16px;
     flex-wrap: wrap;
   }
 
-  .upload-row label { font-size: 13px; color: var(--text-dim); }
-
-  /* Upload zone — compact (has data) */
-  .upload-zone.compact {
-    padding: 12px 20px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    text-align: left;
-    border-style: solid;
-    border-width: 1px;
-  }
-
-  .upload-zone.compact h3 { font-size: 13px; margin: 0; color: var(--text-dim); white-space: nowrap; }
-  .upload-zone.compact p { display: none; }
-  .upload-zone.compact .upload-row { margin-top: 0; }
+  .empty-upload .inline-upload label { font-size: 13px; color: var(--text-dim); }
 
   /* Processing indicator */
   .processing {
@@ -291,26 +308,26 @@
       <option value="90">Last 90 days</option>
       <option value="0" selected>All time</option>
     </select>
-    <button class="danger" id="clearBtn" style="display:none" title="Clear all stored data for this app">Clear history</button>
+    <div class="upload-wrapper">
+      <button class="primary" id="uploadBtn">↑ Upload CSV</button>
+      <div class="upload-popover" id="uploadPopover">
+        <label for="uploadAppSelect">App</label>
+        <select id="uploadAppSelect">
+          <option value="christian-daily-task">Christian Daily Task</option>
+          <option value="girlwalk">GirlWalk</option>
+          <option value="girltalk">GirlTalk</option>
+        </select>
+        <div class="upload-actions">
+          <button class="primary" id="browseBtn">Browse file</button>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.gz,.csv.gz">
+      </div>
+    </div>
+    <button class="danger" id="clearBtn" style="display:none" title="Clear all stored data for this app">Clear</button>
   </div>
 </div>
 
 <div class="container">
-  <div class="upload-zone" id="uploadZone">
-    <h3>Upload RevenueCat Export</h3>
-    <p>Drag & drop a .csv or .csv.gz file (RC "All Users" export)</p>
-    <div class="upload-row">
-      <label for="uploadAppSelect">App:</label>
-      <select id="uploadAppSelect">
-        <option value="christian-daily-task">Christian Daily Task</option>
-        <option value="girlwalk">GirlWalk</option>
-        <option value="girltalk">GirlTalk</option>
-      </select>
-      <button class="primary" id="browseBtn">Browse files</button>
-      <input type="file" id="fileInput" accept=".csv,.gz,.csv.gz">
-    </div>
-  </div>
-
   <div id="processingIndicator" style="display:none">
     <div class="processing">
       <div class="spinner"></div>
@@ -318,12 +335,7 @@
     </div>
   </div>
 
-  <div id="content">
-    <div class="empty-state">
-      <h2>No data yet</h2>
-      <p>Upload a RevenueCat "All Users" CSV export to get started.</p>
-    </div>
-  </div>
+  <div id="content"></div>
 </div>
 
 <script>
@@ -519,7 +531,7 @@ async function handleFile(file) {
 
     populateAppSelector();
     document.getElementById('appSelector').value = slug;
-    updateUploadZone();
+    closePopover();
     renderApp(slug);
     showToast(`Processed ${rows.length.toLocaleString()} users for ${appName}`, 'success');
   } catch (err) {
@@ -530,14 +542,9 @@ async function handleFile(file) {
   }
 }
 
-// ─── Upload zone state ───
-function updateUploadZone() {
-  const zone = document.getElementById('uploadZone');
-  if (hasAnyData()) {
-    zone.classList.add('compact');
-  } else {
-    zone.classList.remove('compact');
-  }
+// ─── Upload popover ───
+function closePopover() {
+  document.getElementById('uploadPopover').classList.remove('open');
 }
 
 // ─── UI rendering ───
@@ -566,26 +573,52 @@ function filterWeeks(weeks, rangeDays) {
 }
 
 function renderApp(slug) {
-  if (!slug) {
+  if (!slug || !getSnapshots(slug).length) {
+    const appLabel = slug ? APPS[slug]?.name || slug : '';
     document.getElementById('content').innerHTML = `
-      <div class="empty-state">
-        <h2>No data yet</h2>
-        <p>Upload a RevenueCat "All Users" CSV export to get started.</p>
+      <div class="empty-upload" id="emptyUpload">
+        <h2>${slug ? `No data for ${appLabel}` : 'No data yet'}</h2>
+        <p>Upload a RevenueCat "All Users" CSV export to get started</p>
+        <div class="inline-upload">
+          <label for="emptyAppSelect">App:</label>
+          <select id="emptyAppSelect">
+            <option value="christian-daily-task"${slug === 'christian-daily-task' ? ' selected' : ''}>Christian Daily Task</option>
+            <option value="girlwalk"${slug === 'girlwalk' ? ' selected' : ''}>GirlWalk</option>
+            <option value="girltalk"${slug === 'girltalk' ? ' selected' : ''}>GirlTalk</option>
+          </select>
+          <button class="primary" id="emptyBrowseBtn">Browse file</button>
+          <input type="file" id="emptyFileInput" accept=".csv,.gz,.csv.gz" style="display:none">
+        </div>
       </div>`;
+    // Wire up empty-state upload
+    const emptyFileInput = document.getElementById('emptyFileInput');
+    document.getElementById('emptyBrowseBtn').addEventListener('click', e => { e.stopPropagation(); emptyFileInput.click(); });
+    document.getElementById('emptyUpload').addEventListener('click', e => {
+      if (!['SELECT','BUTTON','OPTION'].includes(e.target.tagName)) emptyFileInput.click();
+    });
+    emptyFileInput.addEventListener('change', e => {
+      if (e.target.files[0]) {
+        document.getElementById('uploadAppSelect').value = document.getElementById('emptyAppSelect').value;
+        handleFile(e.target.files[0]);
+      }
+      e.target.value = '';
+    });
+    // Drag & drop on empty state
+    const emptyZone = document.getElementById('emptyUpload');
+    emptyZone.addEventListener('dragover', e => { e.preventDefault(); emptyZone.style.borderColor = 'var(--blue)'; });
+    emptyZone.addEventListener('dragleave', () => { emptyZone.style.borderColor = ''; });
+    emptyZone.addEventListener('drop', e => {
+      e.preventDefault(); emptyZone.style.borderColor = '';
+      if (e.dataTransfer.files[0]) {
+        document.getElementById('uploadAppSelect').value = document.getElementById('emptyAppSelect').value;
+        handleFile(e.dataTransfer.files[0]);
+      }
+    });
     document.getElementById('clearBtn').style.display = 'none';
     return;
   }
 
   const snapshots = getSnapshots(slug);
-  if (snapshots.length === 0) {
-    document.getElementById('content').innerHTML = `
-      <div class="empty-state">
-        <h2>No data for ${APPS[slug]?.name || slug}</h2>
-        <p>Upload a CSV export for this app.</p>
-      </div>`;
-    document.getElementById('clearBtn').style.display = 'none';
-    return;
-  }
 
   document.getElementById('clearBtn').style.display = '';
   const latest = snapshots[snapshots.length - 1];
@@ -822,17 +855,22 @@ function showToast(msg, type = 'success') {
 }
 
 // ─── Events ───
-const uploadZone = document.getElementById('uploadZone');
 const fileInput = document.getElementById('fileInput');
+const uploadPopover = document.getElementById('uploadPopover');
+
+// Toggle popover
+document.getElementById('uploadBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  uploadPopover.classList.toggle('open');
+});
+
+// Close popover on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('.upload-wrapper')) closePopover();
+});
 
 document.getElementById('browseBtn').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
-uploadZone.addEventListener('click', e => {
-  if (!['SELECT','BUTTON','OPTION'].includes(e.target.tagName)) fileInput.click();
-});
 fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; });
-uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
-uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
 
 document.getElementById('appSelector').addEventListener('change', e => renderApp(e.target.value));
 document.getElementById('rangeSelector').addEventListener('change', () => {
@@ -846,7 +884,6 @@ document.getElementById('clearBtn').addEventListener('click', () => {
   if (confirm(`Clear all stored data for ${APPS[slug]?.name || slug}?`)) {
     clearAppData(slug);
     populateAppSelector();
-    updateUploadZone();
     renderApp(slug);
     showToast('Data cleared', 'success');
   }
@@ -854,7 +891,6 @@ document.getElementById('clearBtn').addEventListener('click', () => {
 
 // ─── Init ───
 populateAppSelector();
-updateUploadZone();
 
 const stored = loadStorage();
 const firstWithData = Object.keys(APPS).find(slug => stored[slug]?.length > 0);
