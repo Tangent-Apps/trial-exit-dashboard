@@ -827,9 +827,11 @@ function renderCohortChart(cohorts, granularity) {
   const filled = fillTimelineGaps(cohorts, granularity);
   // Only show rates for periods with resolved data; null otherwise (gaps in chart line)
   const labels = filled.map(c => c.period);
-  const convData = filled.map(c => c.resolved > 0 && c.conversion_rate !== null ? +(c.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = filled.map(c => c.resolved > 0 && c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
-  const billingData = filled.map(c => c.resolved > 0 && c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
+  // Only show rates for cohorts where >50% of users have resolved (mature enough to be meaningful)
+  const isMature = c => c.total_trials > 0 && (c.resolved / c.total_trials) > 0.5;
+  const convData = filled.map(c => isMature(c) ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filled.map(c => isMature(c) ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filled.map(c => isMature(c) ? +(c.billing_rate * 100).toFixed(1) : null);
   const inTrialData = filled.map(c => c.total_trials > 0 ? +((c.in_trial / c.total_trials) * 100).toFixed(1) : null);
 
   const trialsData = filled.map(c => c.total_trials || 0);
