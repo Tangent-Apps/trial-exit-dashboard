@@ -446,29 +446,33 @@ function parseTimestamp(val) {
 
 function getDateKey(date) {
   if (!date) return null;
-  return date.toISOString().split('T')[0];
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function getWeekStart(date) {
   if (!date) return null;
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const m = new Date(d);
-  m.setDate(diff);
-  return m.toISOString().split('T')[0];
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return getDateKey(d);
 }
 
 function getMonthKey(date) {
   if (!date) return null;
-  return date.toISOString().slice(0, 7);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
 }
 
 function bucketCohorts(dailyCohorts, granularity) {
   if (granularity === 'daily') return dailyCohorts;
   const map = {};
   dailyCohorts.forEach(d => {
-    const dateObj = new Date(d.period + 'T00:00:00');
+    const dateObj = new Date(d.period + 'T12:00:00Z');
     const key = granularity === 'monthly' ? getMonthKey(dateObj) : getWeekStart(dateObj);
     if (!key) return;
     if (!map[key]) map[key] = { period: key, total_trials: 0, resolved: 0, in_trial: 0, converted: 0, cancelled: 0, billing_issue: 0 };
@@ -782,18 +786,20 @@ function fillTimelineGaps(cohorts, granularity) {
   const map = {};
   cohorts.forEach(c => { map[c.period] = c; });
 
-  const start = new Date(cohorts[0].period + 'T00:00:00');
-  const end = new Date(cohorts[cohorts.length - 1].period + 'T00:00:00');
+  const firstP = cohorts[0].period;
+  const lastP = cohorts[cohorts.length - 1].period;
+  // Parse periods as UTC noon to avoid timezone edge cases
+  const start = granularity === 'monthly'
+    ? new Date(firstP + '-01T12:00:00Z')
+    : new Date(firstP + 'T12:00:00Z');
+  const end = granularity === 'monthly'
+    ? new Date(lastP + '-01T12:00:00Z')
+    : new Date(lastP + 'T12:00:00Z');
   const result = [];
   const cursor = new Date(start);
 
   while (cursor <= end) {
-    let key;
-    if (granularity === 'monthly') {
-      key = cursor.toISOString().slice(0, 7);
-    } else {
-      key = cursor.toISOString().split('T')[0];
-    }
+    const key = granularity === 'monthly' ? getMonthKey(cursor) : getDateKey(cursor);
 
     if (map[key]) {
       result.push(map[key]);
@@ -801,13 +807,13 @@ function fillTimelineGaps(cohorts, granularity) {
       result.push({ period: key, resolved: 0, conversion_rate: null, cancel_rate: null, billing_rate: null, total_trials: 0 });
     }
 
-    // Advance cursor
+    // Advance cursor in UTC
     if (granularity === 'monthly') {
-      cursor.setMonth(cursor.getMonth() + 1);
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
     } else if (granularity === 'weekly') {
-      cursor.setDate(cursor.getDate() + 7);
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
     } else {
-      cursor.setDate(cursor.getDate() + 1);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
   }
   return result;
