@@ -296,6 +296,53 @@
   tr.incomplete td { border-left: 3px dashed rgba(96,165,250,0.4); }
   tr.incomplete td:first-child { padding-left: 9px; }
   .incomplete-tag { font-size: 11px; color: var(--blue); opacity: 0.7; margin-left: 4px; }
+
+  /* Settings popover */
+  .settings-wrapper { position: relative; }
+  .settings-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 16px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .settings-btn:hover { border-color: var(--blue); color: var(--text); }
+  .settings-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    z-index: 100;
+    min-width: 320px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .settings-popover.open { display: block; }
+  .settings-popover label { font-size: 13px; color: var(--text-dim); display: block; margin-bottom: 6px; }
+  .settings-popover input[type="password"] {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: monospace;
+    margin-bottom: 8px;
+  }
+  .settings-popover input[type="password"]:focus { border-color: var(--blue); outline: none; }
+  .settings-popover .help-text { font-size: 11px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.4; }
+  .settings-popover .help-text a { color: var(--blue); text-decoration: none; }
+  .settings-popover .help-text a:hover { text-decoration: underline; }
+  .token-status { font-size: 12px; padding: 6px 10px; border-radius: 6px; margin-top: 8px; }
+  .token-status.saved { background: rgba(52,211,153,0.15); color: var(--green); }
+  .token-status.none { background: rgba(248,113,113,0.1); color: var(--text-dim); }
 </style>
 </head>
 <body>
@@ -332,7 +379,22 @@
         <input type="file" id="fileInput" accept=".csv,.gz,.csv.gz">
       </div>
     </div>
-    <button id="publishBtn" style="display:none;background:rgba(52,211,153,0.15);border-color:var(--green);color:var(--green);font-size:12px;padding:6px 10px" title="Download data.json to commit to repo for team sharing">↓ Publish</button>
+    <div class="settings-wrapper">
+      <button class="settings-btn" id="settingsBtn" title="Settings">⚙</button>
+      <div class="settings-popover" id="settingsPopover">
+        <label for="ghTokenInput">GitHub Personal Access Token</label>
+        <input type="password" id="ghTokenInput" placeholder="github_pat_...">
+        <div class="help-text">
+          Fine-grained PAT with <strong>Contents: Read &amp; Write</strong> access to <code>Tangent-Apps/trial-exit-dashboard</code>.<br>
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank">Create token →</a>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="primary" id="saveTokenBtn" style="flex:1;font-size:13px;padding:6px 12px">Save token</button>
+          <button id="clearTokenBtn" style="flex:0;font-size:13px;padding:6px 12px;color:var(--red);border-color:var(--red);background:rgba(248,113,113,0.1)">Clear</button>
+        </div>
+        <div id="tokenStatus"></div>
+      </div>
+    </div>
     <button class="danger" id="clearBtn" style="display:none" title="Clear all stored data for this app">Clear</button>
   </div>
 </div>
@@ -614,6 +676,9 @@ async function handleFile(file) {
     closePopover();
     renderApp(slug);
     showToast(`Processed ${rows.length.toLocaleString()} users for ${appName}`, 'success');
+
+    // Auto-publish to GitHub if token is configured
+    publishToGitHub();
   } catch (err) {
     showToast(`Error: ${err.message}`, 'error');
     console.error(err);
@@ -694,14 +759,12 @@ function renderApp(slug) {
       }
     });
     document.getElementById('clearBtn').style.display = 'none';
-    document.getElementById('publishBtn').style.display = 'none';
     return;
   }
 
   const snapshots = getSnapshots(slug);
 
   document.getElementById('clearBtn').style.display = '';
-  document.getElementById('publishBtn').style.display = '';
   const latest = snapshots[snapshots.length - 1];
   const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
 
@@ -1081,16 +1144,104 @@ document.getElementById('clearBtn').addEventListener('click', () => {
   }
 });
 
-// ─── Publish (export data.json for team sharing) ───
-document.getElementById('publishBtn').addEventListener('click', () => {
+// ─── GitHub API auto-publish ───
+const GH_TOKEN_KEY = 'trial-exit-gh-token';
+const GH_REPO = 'Tangent-Apps/trial-exit-dashboard';
+const GH_FILE = 'data.json';
+
+function getGhToken() { return localStorage.getItem(GH_TOKEN_KEY) || ''; }
+function setGhToken(token) { localStorage.setItem(GH_TOKEN_KEY, token); }
+function clearGhToken() { localStorage.removeItem(GH_TOKEN_KEY); }
+
+function updateTokenStatus() {
+  const el = document.getElementById('tokenStatus');
+  const input = document.getElementById('ghTokenInput');
+  const token = getGhToken();
+  if (token) {
+    el.className = 'token-status saved';
+    el.textContent = '✓ Token saved (stored locally)';
+    input.value = token;
+  } else {
+    el.className = 'token-status none';
+    el.textContent = 'No token set — auto-publish disabled';
+    input.value = '';
+  }
+}
+
+async function publishToGitHub() {
+  const token = getGhToken();
+  if (!token) return; // silently skip if no token
+
   const data = loadStorage();
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'data.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  showToast('Downloaded data.json — commit it to the repo to share with your team', 'success');
+  const content = btoa(unescape(encodeURIComponent(JSON.stringify(data, null, 2))));
+
+  try {
+    // Get current file SHA (needed for update)
+    const getResp = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+      headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+
+    let sha = null;
+    if (getResp.ok) {
+      const existing = await getResp.json();
+      sha = existing.sha;
+    }
+
+    // Commit the updated data.json
+    const body = {
+      message: `Update data.json (${new Date().toISOString().split('T')[0]})`,
+      content,
+      ...(sha ? { sha } : {})
+    };
+
+    const putResp = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!putResp.ok) {
+      const err = await putResp.json();
+      throw new Error(err.message || `GitHub API ${putResp.status}`);
+    }
+
+    showToast('Published to GitHub — team will see updates shortly', 'success');
+  } catch (err) {
+    console.error('GitHub publish failed:', err);
+    showToast(`Publish failed: ${err.message}`, 'error');
+  }
+}
+
+// ─── Settings popover events ───
+document.getElementById('settingsBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  document.getElementById('settingsPopover').classList.toggle('open');
+  updateTokenStatus();
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.settings-wrapper')) {
+    document.getElementById('settingsPopover').classList.remove('open');
+  }
+});
+
+document.getElementById('saveTokenBtn').addEventListener('click', () => {
+  const token = document.getElementById('ghTokenInput').value.trim();
+  if (!token) { showToast('Enter a token first', 'error'); return; }
+  setGhToken(token);
+  updateTokenStatus();
+  showToast('GitHub token saved', 'success');
+});
+
+document.getElementById('clearTokenBtn').addEventListener('click', () => {
+  clearGhToken();
+  document.getElementById('ghTokenInput').value = '';
+  updateTokenStatus();
+  showToast('Token cleared', 'success');
 });
 
 // ─── Init ───
