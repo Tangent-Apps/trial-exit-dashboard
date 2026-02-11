@@ -771,21 +771,59 @@ function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
     </div>
   `;
 
-  if (cohorts.length > 0) renderCohortChart(cohorts);
+  if (cohorts.length > 0) renderCohortChart(cohorts, granularity);
   renderCohortTable(cohorts, granLabel);
   renderProductTable(latest);
 }
 
-function renderCohortChart(cohorts) {
+// Fill gaps in the timeline so the chart x-axis is continuous
+function fillTimelineGaps(cohorts, granularity) {
+  if (cohorts.length < 2) return cohorts;
+  const map = {};
+  cohorts.forEach(c => { map[c.period] = c; });
+
+  const start = new Date(cohorts[0].period + 'T00:00:00');
+  const end = new Date(cohorts[cohorts.length - 1].period + 'T00:00:00');
+  const result = [];
+  const cursor = new Date(start);
+
+  while (cursor <= end) {
+    let key;
+    if (granularity === 'monthly') {
+      key = cursor.toISOString().slice(0, 7);
+    } else {
+      key = cursor.toISOString().split('T')[0];
+    }
+
+    if (map[key]) {
+      result.push(map[key]);
+    } else {
+      result.push({ period: key, resolved: 0, conversion_rate: null, cancel_rate: null, billing_rate: null, total_trials: 0 });
+    }
+
+    // Advance cursor
+    if (granularity === 'monthly') {
+      cursor.setMonth(cursor.getMonth() + 1);
+    } else if (granularity === 'weekly') {
+      cursor.setDate(cursor.getDate() + 7);
+    } else {
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  return result;
+}
+
+function renderCohortChart(cohorts, granularity) {
   const ctx = document.getElementById('cohortChart').getContext('2d');
   if (cohortChart) cohortChart.destroy();
 
-  const filtered = cohorts.filter(c => c.resolved > 0);
-
-  const labels = filtered.map(c => c.period);
-  const convData = filtered.map(c => c.conversion_rate !== null ? +(c.conversion_rate * 100).toFixed(1) : null);
-  const cancelData = filtered.map(c => c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
-  const billingData = filtered.map(c => c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
+  // Fill gaps so the timeline is continuous
+  const filled = fillTimelineGaps(cohorts, granularity);
+  // Only show rates for periods with resolved data; null otherwise (gaps in chart line)
+  const labels = filled.map(c => c.period);
+  const convData = filled.map(c => c.resolved > 0 && c.conversion_rate !== null ? +(c.conversion_rate * 100).toFixed(1) : null);
+  const cancelData = filled.map(c => c.resolved > 0 && c.cancel_rate !== null ? +(c.cancel_rate * 100).toFixed(1) : null);
+  const billingData = filled.map(c => c.resolved > 0 && c.billing_rate !== null ? +(c.billing_rate * 100).toFixed(1) : null);
 
   cohortChart = new Chart(ctx, {
     type: 'line',
@@ -795,17 +833,17 @@ function renderCohortChart(cohorts) {
         {
           label: 'Conversion %', data: convData,
           borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,0.1)',
-          fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
+          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
         },
         {
           label: 'Cancel %', data: cancelData,
           borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.1)',
-          fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
+          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
         },
         {
           label: 'Billing Issue %', data: billingData,
           borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.1)',
-          fill: true, tension: 0.3, pointRadius: 4, borderWidth: 2,
+          fill: true, tension: 0.3, pointRadius: granularity === 'daily' ? 2 : 4, borderWidth: 2, spanGaps: true,
         },
       ]
     },
