@@ -366,7 +366,7 @@
       <option value="90">Last 90 days</option>
       <option value="0" selected>All time</option>
     </select>
-    <div class="upload-wrapper">
+    <div class="upload-wrapper" style="display:none">
       <button class="primary" id="uploadBtn">↑ Upload CSV</button>
       <div class="upload-popover" id="uploadPopover">
         <label for="uploadAppSelect">App</label>
@@ -833,7 +833,7 @@ function renderApp(slug) {
 
   const snapshots = getSnapshots(slug);
 
-  document.getElementById('clearBtn').style.display = '';
+  document.getElementById('clearBtn').style.display = 'none';
   const latest = snapshots[snapshots.length - 1];
   const prev = snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
 
