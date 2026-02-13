@@ -529,12 +529,15 @@ function saveStorage(data) {
 }
 
 function getSnapshots(slug) {
-  // Firestore live data takes priority
+  // Uploaded CSV data takes priority (deliberate user action)
+  const data = loadStorage();
+  const local = (data[slug] || []).sort((a, b) => a.date.localeCompare(b.date));
+  if (local.length > 0) return local;
+  // Fall back to Firestore live data
   if (firestoreCache[slug] && firestoreCache[slug].length > 0) {
     return firestoreCache[slug];
   }
-  const data = loadStorage();
-  return (data[slug] || []).sort((a, b) => a.date.localeCompare(b.date));
+  return [];
 }
 
 function addSnapshot(slug, snapshot) {
