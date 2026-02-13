@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cohort data: anyone can read (dashboard is public), only server can write
+    match /apps/{appSlug}/cohorts/{date} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User data: only server can read/write (not exposed to dashboard)
+    match /apps/{appSlug}/users/{userId} {
+      allow read, write: if false;
+    }
+  }
+}
