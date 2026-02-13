@@ -1379,17 +1379,17 @@
     },
     {
       "date": "2026-02-13",
-      "generated_at": "2026-02-13T15:05:12.861Z",
+      "generated_at": "2026-02-13T22:08:50.224Z",
       "overall": {
-        "total_trials": 371,
-        "resolved": 341,
-        "in_trial": 30,
+        "total_trials": 390,
+        "resolved": 347,
+        "in_trial": 43,
         "converted": 88,
-        "cancelled": 187,
+        "cancelled": 193,
         "billing_issue": 66,
-        "conversion_rate": 0.2372,
-        "cancel_rate": 0.504,
-        "billing_rate": 0.1779
+        "conversion_rate": 0.2256,
+        "cancel_rate": 0.4949,
+        "billing_rate": 0.1692
       },
       "daily_cohorts": [
         {
@@ -2713,19 +2713,31 @@
           "period": "2026-02-12"
         },
         {
-          "total_trials": 18,
-          "resolved": 11,
-          "in_trial": 7,
+          "total_trials": 37,
+          "resolved": 17,
+          "in_trial": 20,
           "converted": 0,
-          "cancelled": 11,
+          "cancelled": 17,
           "billing_issue": 0,
           "conversion_rate": 0,
-          "cancel_rate": 0.6111,
+          "cancel_rate": 0.4595,
           "billing_rate": 0,
           "period": "2026-02-13"
         }
       ],
       "products": [
+        {
+          "total_trials": 127,
+          "resolved": 99,
+          "in_trial": 28,
+          "converted": 10,
+          "cancelled": 64,
+          "billing_issue": 25,
+          "conversion_rate": 0.0787,
+          "cancel_rate": 0.5039,
+          "billing_rate": 0.1969,
+          "product_id": "com.tangent.solo.girlies.yearly.medium.price"
+        },
         {
           "total_trials": 120,
           "resolved": 120,
@@ -2739,38 +2751,26 @@
           "product_id": "com.tangent.solo.girlies.weekly.medium.price"
         },
         {
-          "total_trials": 112,
-          "resolved": 94,
-          "in_trial": 18,
-          "converted": 10,
-          "cancelled": 59,
-          "billing_issue": 25,
-          "conversion_rate": 0.0893,
-          "cancel_rate": 0.5268,
-          "billing_rate": 0.2232,
-          "product_id": "com.tangent.solo.girlies.yearly.medium.price"
-        },
-        {
-          "total_trials": 106,
+          "total_trials": 107,
           "resolved": 106,
-          "in_trial": 0,
+          "in_trial": 1,
           "converted": 36,
           "cancelled": 54,
           "billing_issue": 16,
-          "conversion_rate": 0.3396,
-          "cancel_rate": 0.5094,
-          "billing_rate": 0.1509,
+          "conversion_rate": 0.3364,
+          "cancel_rate": 0.5047,
+          "billing_rate": 0.1495,
           "product_id": "com.tangent.solo.girlies.weekly"
         },
         {
-          "total_trials": 24,
-          "resolved": 12,
-          "in_trial": 12,
+          "total_trials": 27,
+          "resolved": 13,
+          "in_trial": 14,
           "converted": 0,
-          "cancelled": 12,
+          "cancelled": 13,
           "billing_issue": 0,
           "conversion_rate": 0,
-          "cancel_rate": 0.5,
+          "cancel_rate": 0.4815,
           "billing_rate": 0,
           "product_id": "com.tangent.solo.girlies.yearly.high.price"
         },
@@ -2800,7 +2800,7 @@
         }
       ],
       "app": "GirlTalk",
-      "row_count": 371
+      "row_count": 390
     }
   ],
   "christian-daily-task": [
