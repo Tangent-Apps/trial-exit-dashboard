@@ -7,6 +7,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --bg: #0f1117;
@@ -422,6 +424,68 @@ const MIN_TRIALS_FOR_RATE = 5; // Don't show rates for cohorts with fewer trials
 const TRIAL_DAYS = 3; // Trial length in days; cohorts within this window are "incomplete"
 let cohortChart = null;
 
+// ─── Firebase / Firestore (live data source) ───
+firebase.initializeApp({
+  apiKey: "AIzaSyAN3tmJhIbRnOO-GblB-hgJtAwUWMrilZg",
+  authDomain: "tangent-trial-exit-dashboard.firebaseapp.com",
+  projectId: "tangent-trial-exit-dashboard",
+});
+const firestore = firebase.firestore();
+const firestoreCache = {}; // { slug: [snapshot] }
+
+async function loadFromFirestore(slug) {
+  try {
+    const snapshot = await firestore.collection(`apps/${slug}/cohorts`).orderBy('period').get();
+    if (snapshot.empty) return null;
+
+    const daily_cohorts = snapshot.docs.map(doc => {
+      const d = doc.data();
+      return {
+        period: d.period,
+        total_trials: d.total_trials || 0,
+        in_trial: d.in_trial || 0,
+        converted: d.converted || 0,
+        cancelled: d.cancelled || 0,
+        billing_issue: d.billing_issue || 0,
+        resolved: (d.converted || 0) + (d.cancelled || 0) + (d.billing_issue || 0),
+        conversion_rate: d.conversion_rate || 0,
+        cancel_rate: d.cancel_rate || 0,
+        billing_rate: d.billing_rate || 0,
+      };
+    });
+
+    let totalTrials = 0, inTrial = 0, converted = 0, cancelled = 0, billing = 0;
+    daily_cohorts.forEach(c => {
+      totalTrials += c.total_trials;
+      inTrial += c.in_trial;
+      converted += c.converted;
+      cancelled += c.cancelled;
+      billing += c.billing_issue;
+    });
+    const resolved = converted + cancelled + billing;
+
+    return {
+      date: new Date().toISOString().split('T')[0],
+      generated_at: new Date().toISOString(),
+      app: APPS[slug]?.name || slug,
+      row_count: totalTrials,
+      source: 'firestore',
+      overall: {
+        total_trials: totalTrials, resolved, in_trial: inTrial,
+        converted, cancelled, billing_issue: billing,
+        conversion_rate: totalTrials > 0 ? Math.round((converted / totalTrials) * 10000) / 10000 : null,
+        cancel_rate: totalTrials > 0 ? Math.round((cancelled / totalTrials) * 10000) / 10000 : null,
+        billing_rate: totalTrials > 0 ? Math.round((billing / totalTrials) * 10000) / 10000 : null,
+      },
+      daily_cohorts,
+      products: [],
+    };
+  } catch (err) {
+    console.error(`Firestore load failed for ${slug}:`, err);
+    return null;
+  }
+}
+
 // ─── Incomplete cohort detection ───
 function isIncomplete(period, granularity) {
   const now = new Date();
@@ -465,6 +529,10 @@ function saveStorage(data) {
 }
 
 function getSnapshots(slug) {
+  // Firestore live data takes priority
+  if (firestoreCache[slug] && firestoreCache[slug].length > 0) {
+    return firestoreCache[slug];
+  }
   const data = loadStorage();
   return (data[slug] || []).sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -486,6 +554,7 @@ function clearAppData(slug) {
 }
 
 function hasAnyData() {
+  if (Object.values(firestoreCache).some(arr => arr && arr.length > 0)) return true;
   const data = loadStorage();
   return Object.values(data).some(arr => arr && arr.length > 0);
 }
@@ -828,7 +897,7 @@ function renderDashboard(slug, latest, prev, overall, cohorts, granularity) {
 
   document.getElementById('content').innerHTML = `
     <div class="history-bar">
-      <span class="snapshots-info">Uploaded: ${latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} users &middot; Showing: ${rangeLabel} (${cohorts.length} ${granLabelPlural})</span>
+      <span class="snapshots-info">${latest.source === 'firestore' ? '<span style="color:var(--green)">● Live</span>' : 'Uploaded: ' + latest.date} &middot; ${(latest.row_count || 0).toLocaleString()} trials &middot; Showing: ${rangeLabel} (${cohorts.length} ${granLabelPlural})</span>
     </div>
 
     <div class="metrics-row">
@@ -1274,7 +1343,7 @@ document.addEventListener('keydown', e => {
   }
 })();
 
-// Fetch shared data.json from repo, merge with localStorage (local wins if newer)
+// Fetch shared data.json from repo, merge with localStorage (fallback if no Firestore data)
 async function initFromSharedData() {
   try {
     const resp = await fetch('data.json?_=' + Date.now());
@@ -1282,7 +1351,6 @@ async function initFromSharedData() {
     const shared = await resp.json();
     const local = loadStorage();
 
-    // Merge: for each app, use whichever snapshot is newer
     let merged = { ...shared };
     for (const slug of Object.keys(local)) {
       if (!merged[slug] || !merged[slug].length) {
@@ -1297,20 +1365,49 @@ async function initFromSharedData() {
     }
     saveStorage(merged);
   } catch (e) {
-    // No shared data or fetch failed — use localStorage only
     console.log('No shared data.json found, using local data only');
-  }
-
-  populateAppSelector();
-  const stored = loadStorage();
-  const firstWithData = Object.keys(APPS).find(slug => stored[slug]?.length > 0);
-  if (firstWithData) {
-    document.getElementById('appSelector').value = firstWithData;
-    renderApp(firstWithData);
   }
 }
 
-initFromSharedData();
+// Primary init: try Firestore first, fall back to data.json/localStorage
+async function init() {
+  populateAppSelector();
+
+  // Show loading state
+  document.getElementById('content').innerHTML = `
+    <div class="processing">
+      <div class="spinner"></div>
+      <span>Loading live data...</span>
+    </div>`;
+
+  // Try Firestore for each app
+  let hasFirestoreData = false;
+  const loadPromises = Object.keys(APPS).map(async slug => {
+    const snapshot = await loadFromFirestore(slug);
+    if (snapshot && snapshot.daily_cohorts.length > 0) {
+      firestoreCache[slug] = [snapshot];
+      hasFirestoreData = true;
+    }
+  });
+  await Promise.all(loadPromises);
+
+  // Fall back to data.json/localStorage if no Firestore data
+  if (!hasFirestoreData) {
+    await initFromSharedData();
+  }
+
+  // Render first app that has data
+  const firstWithData = Object.keys(APPS).find(slug => getSnapshots(slug).length > 0);
+  if (firstWithData) {
+    document.getElementById('appSelector').value = firstWithData;
+    renderApp(firstWithData);
+  } else {
+    document.getElementById('content').innerHTML = '';
+    renderApp('');
+  }
+}
+
+init();
 </script>
 </body>
 </html>
