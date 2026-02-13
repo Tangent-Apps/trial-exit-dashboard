@@ -486,6 +486,31 @@ async function loadFromFirestore(slug) {
   }
 }
 
+// ─── Sync CSV cohort data to Firestore via Cloud Function ───
+const BACKFILL_URL = 'https://us-central1-tangent-trial-exit-dashboard.cloudfunctions.net/backfill';
+
+async function syncToFirestore(slug, snapshot) {
+  if (!snapshot || !snapshot.daily_cohorts || snapshot.daily_cohorts.length === 0) return;
+  try {
+    const resp = await fetch(BACKFILL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, cohorts: snapshot.daily_cohorts }),
+    });
+    const result = await resp.json();
+    if (result.status === 'ok') {
+      console.log(`Synced ${result.count} cohorts to Firestore for ${slug}`);
+      // Refresh Firestore cache so dashboard shows latest
+      const fresh = await loadFromFirestore(slug);
+      if (fresh) firestoreCache[slug] = [fresh];
+    } else {
+      console.warn('Firestore sync issue:', result);
+    }
+  } catch (err) {
+    console.warn('Firestore sync failed (non-blocking):', err);
+  }
+}
+
 // ─── Incomplete cohort detection ───
 function isIncomplete(period, granularity) {
   const now = new Date();
@@ -529,15 +554,13 @@ function saveStorage(data) {
 }
 
 function getSnapshots(slug) {
-  // Uploaded CSV data takes priority (deliberate user action)
-  const data = loadStorage();
-  const local = (data[slug] || []).sort((a, b) => a.date.localeCompare(b.date));
-  if (local.length > 0) return local;
-  // Fall back to Firestore live data
+  // Firestore live data takes priority (kept in sync by webhooks + CSV backfill)
   if (firestoreCache[slug] && firestoreCache[slug].length > 0) {
     return firestoreCache[slug];
   }
-  return [];
+  // Fall back to localStorage
+  const data = loadStorage();
+  return (data[slug] || []).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function addSnapshot(slug, snapshot) {
@@ -742,6 +765,9 @@ async function handleFile(file) {
     snapshot.app = appName;
     snapshot.row_count = rows.length;
     addSnapshot(slug, snapshot);
+
+    // Sync cohort data to Firestore so live dashboard stays up to date
+    syncToFirestore(slug, snapshot);
 
     populateAppSelector();
     document.getElementById('appSelector').value = slug;
