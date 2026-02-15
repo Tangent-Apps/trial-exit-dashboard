@@ -159,7 +159,7 @@ exports.webhook = onRequest(
       const productId = event.product_id || "";
       const periodType = event.period_type || "";
       const cancelReason = event.cancel_reason || "";
-      const purchasedAtMs = event.purchased_at_ms || null;
+      const purchasedAtMs = event.original_purchased_at_ms || event.purchased_at_ms || null;
       const environment = event.environment || "PRODUCTION";
 
       // Skip sandbox events
