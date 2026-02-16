@@ -131,6 +131,47 @@ exports.backfill = onRequest(
   }
 );
 
+// ─── Cleanup handler (deletes all user + cohort docs for an app) ───
+exports.cleanup = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).send("Method not allowed");
+    }
+
+    try {
+      const { slug } = req.body;
+      if (!slug || !APP_SLUGS[slug]) {
+        return res.status(400).json({ status: "error", reason: "invalid or missing slug" });
+      }
+
+      // Delete all docs in subcollections
+      const collections = ["users", "cohorts"];
+      let totalDeleted = 0;
+
+      for (const col of collections) {
+        const colRef = db.collection(`apps/${slug}/${col}`);
+        let snapshot = await colRef.limit(450).get();
+
+        while (!snapshot.empty) {
+          const batch = db.batch();
+          snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+          await batch.commit();
+          totalDeleted += snapshot.size;
+          console.log(`Deleted ${snapshot.size} docs from apps/${slug}/${col}`);
+          snapshot = await colRef.limit(450).get();
+        }
+      }
+
+      console.log(`Cleanup complete for ${slug}: ${totalDeleted} docs deleted`);
+      return res.status(200).json({ status: "ok", slug, deleted: totalDeleted });
+    } catch (err) {
+      console.error("Cleanup error:", err);
+      return res.status(500).json({ status: "error", message: err.message });
+    }
+  }
+);
+
 // ─── Webhook handler ───
 exports.webhook = onRequest(
   { region: "us-central1", cors: false },
