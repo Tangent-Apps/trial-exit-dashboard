@@ -7,6 +7,8 @@ const db = getFirestore();
 
 // ─── Config ───
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+const TRIAL_DAYS = 3;
+const TRIAL_MS = TRIAL_DAYS * 86400000; // 72 hours in ms
 
 const APP_SLUGS = {
   "christian-daily-task": [
@@ -131,6 +133,29 @@ exports.backfill = onRequest(
   }
 );
 
+// ─── Inspect handler (read Firestore data for debugging) ───
+exports.inspect = onRequest(
+  { region: "us-central1", cors: true },
+  async (req, res) => {
+    try {
+      const slug = req.query.slug || req.body?.slug;
+      const type = req.query.type || req.body?.type || "cohorts"; // "cohorts" or "users"
+      const limit = parseInt(req.query.limit || req.body?.limit || "20");
+
+      if (!slug || !APP_SLUGS[slug]) {
+        return res.status(400).json({ status: "error", reason: "invalid slug" });
+      }
+
+      const colRef = db.collection(`apps/${slug}/${type}`);
+      const snapshot = await colRef.orderBy(type === "cohorts" ? "period" : "updated_at", "desc").limit(limit).get();
+      const docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      return res.status(200).json({ status: "ok", slug, type, count: docs.length, docs });
+    } catch (err) {
+      return res.status(500).json({ status: "error", message: err.message });
+    }
+  }
+);
+
 // ─── Cleanup handler (deletes all user + cohort docs for an app) ───
 exports.cleanup = onRequest(
   { region: "us-central1", cors: true },
@@ -200,7 +225,11 @@ exports.webhook = onRequest(
       const productId = event.product_id || "";
       const periodType = event.period_type || "";
       const cancelReason = event.cancel_reason || "";
-      const purchasedAtMs = event.original_purchased_at_ms || event.purchased_at_ms || null;
+      const rawPurchasedAtMs = event.purchased_at_ms || null;
+      // For RENEWAL events, purchased_at_ms = conversion date, subtract trial length to get trial start
+      const purchasedAtMs = (eventType === "RENEWAL" && rawPurchasedAtMs)
+        ? rawPurchasedAtMs - TRIAL_MS
+        : rawPurchasedAtMs;
       const environment = event.environment || "PRODUCTION";
 
       // Skip sandbox events
