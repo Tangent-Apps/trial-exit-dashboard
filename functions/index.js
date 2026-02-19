@@ -304,8 +304,8 @@ exports.webhook = onRequest(
                 billing_issue: 0,
               };
 
-          // If this is a brand new user (INITIAL_PURCHASE), increment total
-          if (eventType === "INITIAL_PURCHASE" && !prevStatus) {
+          // If this is a brand new user we haven't seen before, increment total
+          if (!prevStatus) {
             data.total_trials += 1;
           }
 
